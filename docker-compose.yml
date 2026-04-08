@@ -1,0 +1,30 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./models_saved:/app/models_saved
+      - ./evidence:/app/evidence
+    environment:
+      - DATABASE_URL=sqlite:///data/traffic.db
+      - LOG_LEVEL=INFO
+      - YOLO_DEVICE=cpu
+      - DEMO_VIDEO_PATH=
+      - DRONE_WEBHOOK_URL=
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
+    restart: unless-stopped

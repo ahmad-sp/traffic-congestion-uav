@@ -1,0 +1,36 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+.venv/
+env/
+.pytest_cache/
+.coverage
+
+# Node.js (Frontend)
+node_modules/
+dist/
+dist-ssr/
+*.local
+.npm/
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Project Specific Data & Logs
+*.db
+*.sqlite3
+logs/
+evidence/*
+!evidence/.gitkeep
+
+# Models and Generated Data
+data/synthetic/*.csv
+data/roi_preview.png
