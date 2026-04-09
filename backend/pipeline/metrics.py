@@ -67,13 +67,19 @@ class MetricsAggregator:
     """
 
     def __init__(self, junction_id: str, arm_id: str, frame_height: int, frame_width: int,
-                 counting_line_y: float = config.COUNTING_LINE_Y_FRACTION):
+                 counting_line_y: float = config.COUNTING_LINE_Y_FRACTION,
+                 recording_start_dt=None,   # datetime (timezone-aware) — offline mode
+                 peak_periods=None):        # list[(int,int)] — per-junction override
         self.junction_id = junction_id
         self.arm_id = arm_id
         self.camera_id = f"{junction_id}_{arm_id}"
         self.frame_height = frame_height
         self.frame_width = frame_width
         self.frame_area = frame_height * frame_width
+
+        self._recording_start_dt = recording_start_dt
+        self._offline = recording_start_dt is not None
+        self._peak_periods = peak_periods or config.PEAK_PERIODS
 
         self.counting_line = CountingLine(frame_height, counting_line_y)
 
@@ -83,6 +89,8 @@ class MetricsAggregator:
         self._near_zone_timestamps: list[float] = []
         self._far_zone_bbox_growth_rates: list[float] = []
         self._minute_start: float = time.time()
+        self._minute_video_ts_start: float = 0.0   # video seconds at start of current minute
+        self._last_video_ts: float = 0.0            # updated each frame
 
     def compute_frame_metrics(self, tracks: list[TrackState], timestamp: float) -> FrameMetrics:
         """Compute metrics from the current set of active tracks."""
@@ -136,10 +144,13 @@ class MetricsAggregator:
         self.counting_line.cleanup_stale(active_ids)
 
         self._frame_metrics.append(fm)
+        self._last_video_ts = timestamp
         return fm
 
     def should_aggregate(self) -> bool:
         """Check if 60 seconds have passed since last aggregation."""
+        if self._offline:
+            return (self._last_video_ts - self._minute_video_ts_start) >= 60.0
         return (time.time() - self._minute_start) >= 60.0
 
     def aggregate_minute(self) -> MinuteMetrics | None:
@@ -150,14 +161,17 @@ class MetricsAggregator:
         if not self._frame_metrics:
             return None
 
-        now = time.time()
-        from datetime import datetime, timezone
-        dt = datetime.fromtimestamp(now, tz=timezone.utc)
+        if self._offline:
+            from datetime import timedelta
+            dt = self._recording_start_dt + timedelta(seconds=self._minute_video_ts_start)
+        else:
+            from datetime import datetime, timezone
+            dt = datetime.fromtimestamp(time.time(), tz=timezone.utc)
         minute_of_day = dt.hour * 60 + dt.minute
         time_sin = math.sin(2 * math.pi * minute_of_day / 1440)
         time_cos = math.cos(2 * math.pi * minute_of_day / 1440)
         h_of_w = dt.weekday() * 24 + dt.hour
-        is_peak = int(config.is_peak_hour(dt.hour))
+        is_peak = int(any(s <= dt.hour < e for s, e in self._peak_periods))
 
         # VPM from counting line
         vpm = self.counting_line.reset_count()
@@ -216,6 +230,7 @@ class MetricsAggregator:
         self._speed_proxies.clear()
         self._near_zone_timestamps.clear()
         self._far_zone_bbox_growth_rates.clear()
-        self._minute_start = time.time()
+        self._minute_video_ts_start = self._last_video_ts
+        self._minute_start = time.time()  # keep for online-mode fallback
 
         return mm

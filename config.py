@@ -204,6 +204,7 @@ JUNCTIONS = {
     "JCT01": {
         "name": "Main Street / Oak Avenue",
         "type": "+",                          # crossroads
+        "peak_periods": [(7, 9), (17, 19)],   # morning + evening peak
         "arms": {
             "ARM_NORTH": {
                 "name": "Main St Northbound Approach",
@@ -238,6 +239,7 @@ JUNCTIONS = {
     "JCT02": {
         "name": "High Road / Park Lane",
         "type": "T",                          # T-junction
+        "peak_periods": [(7, 9), (17, 19)],   # morning + evening peak
         "arms": {
             "ARM_NORTH": {
                 "name": "High Rd Northbound Approach",
@@ -285,3 +287,8 @@ def get_all_camera_ids() -> list[str]:
 def get_arm_config(junction_id: str, arm_id: str) -> dict:
     """Return the config dict for a specific arm, or raise KeyError."""
     return JUNCTIONS[junction_id]["arms"][arm_id]
+
+
+def get_junction_peak_periods(junction_id: str) -> list:
+    """Return per-junction peak periods, falling back to global PEAK_PERIODS."""
+    return JUNCTIONS.get(junction_id, {}).get("peak_periods", PEAK_PERIODS)

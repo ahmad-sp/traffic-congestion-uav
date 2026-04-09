@@ -3,12 +3,14 @@ Standalone script to process raw handycam video chunks into training CSVs.
 
 Usage:
     python scripts/process_video_interactive.py --video path/to/video.mp4
+    python scripts/process_video_interactive.py --folder path/to/videos/
 
 Workflow:
     1. Shows the first frame so you can click a polygon ROI.
-    2. Processes the video with YOLO + ByteTrack, filtering to detections
+    2. Prompts for junction/arm and recording start datetime.
+    3. Processes the video with YOLO + ByteTrack, filtering to detections
        whose bottom edge overlaps the ROI.
-    3. Aggregates per-minute metrics and saves them to data/<video_name>_extracted.csv
+    4. Aggregates per-minute metrics and saves them to data/<video_name>_extracted.csv
 """
 
 import argparse
@@ -16,6 +18,7 @@ import sys
 import os
 import time
 from dataclasses import asdict
+from datetime import datetime, timezone
 from pathlib import Path
 
 import cv2
@@ -29,6 +32,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 TRAFFIC_SYSTEM_DIR = SCRIPT_DIR.parent
 sys.path.insert(0, str(TRAFFIC_SYSTEM_DIR))
 
+import config
 from backend.pipeline.detection import VehicleDetector
 from backend.pipeline.tracking import VehicleTracker
 from backend.pipeline.metrics import MetricsAggregator
@@ -137,10 +141,65 @@ def detection_in_roi(det, contour: np.ndarray) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Interactive prompts
+# ---------------------------------------------------------------------------
+
+def prompt_junction_arm() -> tuple[str, str]:
+    """Prompt the user to select a junction and arm from config.JUNCTIONS."""
+    junction_ids = list(config.JUNCTIONS.keys())
+
+    print("\n[JUNCTION] Select junction for this video:")
+    for i, jid in enumerate(junction_ids, 1):
+        jname = config.JUNCTIONS[jid]["name"]
+        print(f"  {i}) {jid} — {jname}")
+
+    while True:
+        raw = input("Enter number: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(junction_ids):
+            junction_id = junction_ids[int(raw) - 1]
+            break
+        print(f"  Please enter a number between 1 and {len(junction_ids)}.")
+
+    arm_ids = list(config.JUNCTIONS[junction_id]["arms"].keys())
+    print(f"\n[ARM] Select arm for {junction_id}:")
+    for i, aid in enumerate(arm_ids, 1):
+        aname = config.JUNCTIONS[junction_id]["arms"][aid]["name"]
+        print(f"  {i}) {aid} — {aname}")
+
+    while True:
+        raw = input("Enter number: ").strip()
+        if raw.isdigit() and 1 <= int(raw) <= len(arm_ids):
+            arm_id = arm_ids[int(raw) - 1]
+            break
+        print(f"  Please enter a number between 1 and {len(arm_ids)}.")
+
+    return junction_id, arm_id
+
+
+def prompt_recording_time(video_name: str) -> datetime:
+    """
+    Prompt the user for the recording start datetime of the video.
+    Returns a timezone-aware UTC datetime.
+    """
+    print(f"\n[TIME] What time was '{video_name}' recorded?")
+    print("       Enter as YYYY-MM-DD HH:MM  (e.g. 2026-03-15 08:30): ", end="", flush=True)
+
+    while True:
+        raw = input().strip()
+        try:
+            dt = datetime.strptime(raw, "%Y-%m-%d %H:%M")
+            return dt.replace(tzinfo=timezone.utc)
+        except ValueError:
+            print("  Invalid format. Please use YYYY-MM-DD HH:MM (e.g. 2026-03-15 08:30): ", end="", flush=True)
+
+
+# ---------------------------------------------------------------------------
 # Main processing loop
 # ---------------------------------------------------------------------------
 
-def process_video(video_path: Path, contour: np.ndarray, output_dir: Path) -> None:
+def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
+                  junction_id: str, arm_id: str,
+                  recording_start_dt: datetime, peak_periods: list) -> None:
     cap = cv2.VideoCapture(str(video_path))
     if not cap.isOpened():
         print(f"[ERROR] Cannot open video: {video_path}")
@@ -153,7 +212,9 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path) -> No
 
     print(f"[INFO] Video: {video_path.name}")
     print(f"[INFO] Resolution: {frame_width}x{frame_height} @ {fps:.1f} fps")
-    print(f"[INFO] Total frames: {total_frames} (~{total_frames / fps / 60:.1f} min)\n")
+    print(f"[INFO] Total frames: {total_frames} (~{total_frames / fps / 60:.1f} min)")
+    print(f"[INFO] Junction: {junction_id} / {arm_id}")
+    print(f"[INFO] Recording start: {recording_start_dt.strftime('%Y-%m-%d %H:%M')} UTC\n")
 
     # Pipeline components
     print("[INIT] Loading VehicleDetector (YOLO)...")
@@ -164,15 +225,16 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path) -> No
 
     print("[INIT] Initializing MetricsAggregator...")
     aggregator = MetricsAggregator(
-        junction_id="TRAIN",
-        arm_id="ARM1",
+        junction_id=junction_id,
+        arm_id=arm_id,
         frame_height=frame_height,
         frame_width=frame_width,
+        recording_start_dt=recording_start_dt,
+        peak_periods=peak_periods,
     )
 
     minute_metrics_list = []
     frame_idx = 0
-    video_start_ts = time.time()  # wall-clock anchor; video timestamp is frame-based
 
     print("\n[PROCESSING] Starting frame loop. Press Ctrl+C to stop early.\n")
 
@@ -205,7 +267,9 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path) -> No
                     elapsed_min = len(minute_metrics_list)
                     print(f"  [MINUTE {elapsed_min:>3}] VPM={result.VPM}  "
                           f"queue_depth={result.queue_depth}  "
-                          f"occupancy={result.occupancy_pct:.1f}%")
+                          f"occupancy={result.occupancy_pct:.1f}%  "
+                          f"is_peak={result.is_peak_hour}  "
+                          f"ts={result.timestamp[:16]}")
 
             frame_idx += 1
 
@@ -240,6 +304,43 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path) -> No
 
 
 # ---------------------------------------------------------------------------
+# Batch folder processing
+# ---------------------------------------------------------------------------
+
+def process_folder(folder_path: Path, output_dir: Path) -> None:
+    videos = sorted(folder_path.glob("*.mp4"))
+    if not videos:
+        print(f"[ERROR] No .mp4 files found in: {folder_path}")
+        sys.exit(1)
+
+    print(f"[BATCH] Found {len(videos)} video(s) in {folder_path}")
+
+    for idx, video_path in enumerate(videos):
+        print(f"\n{'=' * 60}")
+        print(f"[BATCH] {idx + 1}/{len(videos)}: {video_path.name}")
+
+        # Read first frame
+        cap = cv2.VideoCapture(str(video_path))
+        ret, first_frame = cap.read()
+        cap.release()
+        if not ret:
+            print(f"[ERROR] Could not read first frame from: {video_path}. Skipping.")
+            continue
+
+        # Prompts
+        junction_id, arm_id = prompt_junction_arm()
+        recording_start_dt = prompt_recording_time(video_path.name)
+        peak_periods = config.get_junction_peak_periods(junction_id)
+
+        # ROI selection
+        contour = select_roi(first_frame)
+
+        # Process
+        process_video(video_path, contour, output_dir, junction_id, arm_id,
+                      recording_start_dt, peak_periods)
+
+
+# ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
 
@@ -247,7 +348,9 @@ def main():
     parser = argparse.ArgumentParser(
         description="Interactive ROI → process video → export training CSV."
     )
-    parser.add_argument("--video", required=True, help="Path to .mp4 video file.")
+    mode = parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument("--video", help="Path to a single .mp4 video file.")
+    mode.add_argument("--folder", help="Process all .mp4 files in a directory sequentially.")
     parser.add_argument(
         "--output-dir",
         default=str(TRAFFIC_SYSTEM_DIR / "data"),
@@ -255,14 +358,23 @@ def main():
     )
     args = parser.parse_args()
 
+    output_dir = Path(args.output_dir).resolve()
+
+    if args.folder:
+        folder_path = Path(args.folder).resolve()
+        if not folder_path.is_dir():
+            print(f"[ERROR] Folder not found: {folder_path}")
+            sys.exit(1)
+        process_folder(folder_path, output_dir)
+        return
+
+    # Single-video mode
     video_path = Path(args.video).resolve()
     if not video_path.exists():
         print(f"[ERROR] Video not found: {video_path}")
         sys.exit(1)
 
-    output_dir = Path(args.output_dir).resolve()
-
-    # --- Step 1: Read first frame ---
+    # Read first frame
     cap = cv2.VideoCapture(str(video_path))
     ret, first_frame = cap.read()
     cap.release()
@@ -270,11 +382,17 @@ def main():
         print(f"[ERROR] Could not read first frame from: {video_path}")
         sys.exit(1)
 
-    # --- Step 2: Interactive ROI selection ---
+    # Prompts
+    junction_id, arm_id = prompt_junction_arm()
+    recording_start_dt = prompt_recording_time(video_path.name)
+    peak_periods = config.get_junction_peak_periods(junction_id)
+
+    # ROI selection
     contour = select_roi(first_frame)
 
-    # --- Step 3: Process video ---
-    process_video(video_path, contour, output_dir)
+    # Process
+    process_video(video_path, contour, output_dir, junction_id, arm_id,
+                  recording_start_dt, peak_periods)
 
 
 if __name__ == "__main__":
