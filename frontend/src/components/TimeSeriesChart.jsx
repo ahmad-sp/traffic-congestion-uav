@@ -16,7 +16,7 @@ export default function TimeSeriesChart({ arm, history, alerts }) {
   if (!history.length) {
     return (
       <div className="bg-gray-800 rounded-lg p-4 text-center text-gray-500">
-        Select an arm to view time series
+        {arm ? 'Loading historical data…' : 'Select an arm to view time series'}
       </div>
     )
   }

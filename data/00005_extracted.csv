@@ -1,0 +1,4 @@
+timestamp,junction_id,arm_id,camera_id,VPM,queue_depth,stopped_ratio,occupancy_pct,mean_bbox_area,max_bbox_area,approach_flow,time_sin,time_cos,is_peak_hour,hour_of_week,mean_speed_proxy,mean_bbox_growth_rate
+2026-03-15T08:30:00+00:00,JCT01,ARM_WEST,JCT01_ARM_WEST,18,1,0.0846,3.53,32026.7,565351.6,0.85,0.793353,-0.608761,1,152,4.87,-126.9804
+2026-03-15T08:31:00+00:00,JCT01,ARM_WEST,JCT01_ARM_WEST,20,1,0.1913,6.7,48608.6,524723.9,1.13,0.79069,-0.612217,1,152,4.06,-207.3994
+2026-03-15T08:32:00+00:00,JCT01,ARM_WEST,JCT01_ARM_WEST,33,1,0.139,4.93,32694.0,454587.7,1.26,0.788011,-0.615661,1,152,4.45,-83.7039

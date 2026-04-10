@@ -24,6 +24,7 @@ import config
 from backend.db.models import init_db, SessionLocal
 from backend.db import crud
 from backend.api.routes import router
+from backend.api.admin_routes import admin_router, load_admin_overrides
 from backend.api.websocket import ws_manager
 from backend.api import _state
 from backend.alerts.manager import AlertManager, Alert
@@ -144,9 +145,13 @@ def _run_demo_simulation():
     """
     Demo mode: simulate traffic by feeding synthetic data through the pipeline.
     Runs in a background thread when no video sources are configured.
+
+    Data is processed chronologically: for each minute-timestamp, every camera
+    that has a row at that timestamp is processed before sleeping and advancing
+    to the next timestamp. This keeps all cameras live simultaneously on the
+    frontend instead of one camera monopolising the simulation.
     """
     import pandas as pd
-    import math
 
     logger.info("Starting demo simulation mode")
     data_path = config.SYNTHETIC_DATA_DIR / "all_arms_combined.csv"
@@ -155,32 +160,31 @@ def _run_demo_simulation():
         return
 
     df = pd.read_csv(data_path)
+    df = df.sort_values("timestamp").reset_index(drop=True)
 
-    for camera_id, group in df.groupby("camera_id"):
-        group = group.sort_values("timestamp").reset_index(drop=True)
-        parts = camera_id.split("_", 1)
-        jid = parts[0]
-        aid = "_".join(parts[1:]) if len(parts) > 1 else parts[0]
+    # Pre-build camera_id -> (junction_id, arm_id, engine) so we don't re-scan
+    # config.JUNCTIONS on every row.
+    camera_map: dict[str, tuple[str, str, object]] = {}
+    for jid_cfg, jdata in config.JUNCTIONS.items():
+        for aid_cfg in jdata["arms"]:
+            camera_id = f"{jid_cfg}_{aid_cfg}"
+            if camera_id in warrant_engines:
+                camera_map[camera_id] = (jid_cfg, aid_cfg, warrant_engines[camera_id])
 
-        # Fix: camera_id format is JCT01_ARM_NORTH, split properly
-        # junction_id = JCT01, arm_id = ARM_NORTH
-        for jid_cfg, jdata in config.JUNCTIONS.items():
-            for aid_cfg in jdata["arms"]:
-                if f"{jid_cfg}_{aid_cfg}" == camera_id:
-                    jid, aid = jid_cfg, aid_cfg
-                    break
+    # Iterate one timestamp at a time; process every camera at that minute,
+    # then sleep before advancing to the next minute.
+    for ts, ts_group in df.groupby("timestamp", sort=False):
+        for _, row in ts_group.iterrows():
+            camera_id = row["camera_id"]
+            if camera_id not in camera_map:
+                continue
 
-        engine_key = f"{jid}_{aid}"
-        if engine_key not in warrant_engines:
-            continue
+            jid, aid, engine = camera_map[camera_id]
 
-        engine = warrant_engines[engine_key]
-
-        for idx, row in group.iterrows():
             # Push to warrant engine
             engine.push_vpm(row["timestamp"], row["VPM"])
 
-            # Push to inference runner
+            # Build feature dict
             features = {
                 "VPM": row["VPM"],
                 "queue_depth": row["queue_depth"],
@@ -194,9 +198,11 @@ def _run_demo_simulation():
                 "is_peak_hour": row["is_peak_hour"],
                 "mean_bbox_growth_rate": row.get("mean_bbox_growth_rate", 0.0),
             }
+
+            # Push to inference runner
             inference_runner.push_metrics(camera_id, features)
 
-            # Run inference every minute (each row = 1 minute)
+            # Run inference (each row = 1 minute)
             ml_result = inference_runner.run_inference(camera_id)
 
             # Evaluate warrants
@@ -232,25 +238,156 @@ def _run_demo_simulation():
                     occupancy_pct=float(row["occupancy_pct"]),
                 )
 
-            # Update latest metrics in state
+            # Update latest metrics in shared state (used by REST /junction/{id}/status)
             _state.update_latest_metrics(jid, aid, features)
 
-            # Broadcast metrics periodically
-            if idx % 5 == 0:
-                _broadcast_from_thread(ws_manager.send_metrics(jid, aid, {
-                    **features,
-                    "VPM": int(row["VPM"]),
-                    "queue_depth": int(row["queue_depth"]),
-                    "lstm_score": ml_result["lstm_score"],
-                    "anomaly_score": ml_result["anomaly_score"],
-                    "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
-                    "alert_level": warrant_output.alert_level,
-                }))
+            # Broadcast live metrics to WebSocket clients
+            _broadcast_from_thread(ws_manager.send_metrics(jid, aid, {
+                **features,
+                "VPM": int(row["VPM"]),
+                "queue_depth": int(row["queue_depth"]),
+                "lstm_score": ml_result["lstm_score"],
+                "anomaly_score": ml_result["anomaly_score"],
+                "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
+                "alert_level": warrant_output.alert_level,
+            }))
 
-            # Small delay to simulate real-time (speed it up for demo)
-            time.sleep(0.01)
+        # Advance one simulated minute — all cameras updated before this sleep
+        time.sleep(0.05)
 
-        logger.info("Demo simulation complete for %s", camera_id)
+    logger.info("Demo simulation complete — all cameras processed")
+
+
+def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
+    """
+    Per-camera processing thread for real video mode.
+
+    Reads frames from the ingestion queue → YOLO detection → ByteTrack →
+    per-frame metrics → per-minute aggregation → warrant engine → inference
+    runner → alert manager → WebSocket broadcast.
+
+    The MetricsAggregator is lazily created after the first frame arrives so
+    we know the actual frame dimensions.
+    """
+    from backend.pipeline.detection import VehicleDetector
+    from backend.pipeline.tracking import VehicleTracker
+    from backend.pipeline.metrics import MetricsAggregator
+
+    camera_id = f"{junction_id}_{arm_id}"
+    logger.info("Camera pipeline starting for %s", camera_id)
+
+    detector = VehicleDetector()
+    tracker = VehicleTracker()
+    aggregator: MetricsAggregator | None = None
+
+    engine = warrant_engines.get(camera_id)
+    if engine is None:
+        logger.error("No warrant engine for %s — camera pipeline will not start", camera_id)
+        return
+
+    peak_periods = config.JUNCTIONS.get(junction_id, {}).get("peak_periods", config.PEAK_PERIODS)
+
+    while True:
+        packet = ingestion.get_frame(camera_id, timeout=2.0)
+        if packet is None:
+            continue
+
+        frame = packet.frame
+        h, w = frame.shape[:2]
+
+        # Lazy-init aggregator once we know frame dimensions
+        if aggregator is None:
+            aggregator = MetricsAggregator(
+                junction_id=junction_id,
+                arm_id=arm_id,
+                frame_height=h,
+                frame_width=w,
+                peak_periods=peak_periods,
+            )
+            logger.info("Aggregator created for %s (%dx%d)", camera_id, w, h)
+
+        # --- Detect → track → per-frame metrics ---
+        detections = detector.detect(frame)
+        det_array = detector.detections_to_array(detections)
+        tracks = tracker.update(det_array, frame)
+        aggregator.compute_frame_metrics(tracks, packet.timestamp)
+
+        # --- Per-minute aggregation ---
+        if not aggregator.should_aggregate():
+            continue
+
+        mm = aggregator.aggregate_minute()
+        if mm is None:
+            continue
+
+        features = {
+            "VPM": mm.VPM,
+            "queue_depth": mm.queue_depth,
+            "stopped_ratio": mm.stopped_ratio,
+            "occupancy_pct": mm.occupancy_pct,
+            "mean_bbox_area": mm.mean_bbox_area,
+            "max_bbox_area": mm.max_bbox_area,
+            "approach_flow": mm.approach_flow,
+            "time_sin": mm.time_sin,
+            "time_cos": mm.time_cos,
+            "is_peak_hour": mm.is_peak_hour,
+            "mean_bbox_growth_rate": mm.mean_bbox_growth_rate,
+        }
+
+        # Push to inference runner
+        inference_runner.push_metrics(camera_id, features)
+        ml_result = inference_runner.run_inference(camera_id)
+
+        # Evaluate warrants
+        engine.push_vpm(mm.timestamp, mm.VPM)
+        warrant_output = engine.evaluate(
+            current_vpm=mm.VPM,
+            hour_of_week=mm.hour_of_week,
+            lstm_score=ml_result["lstm_score"],
+            lstm_ready=ml_result["lstm_ready"],
+            anomaly_score=ml_result["anomaly_score"],
+            is_anomaly=ml_result["is_anomaly"],
+            queue_depth=mm.queue_depth,
+        )
+
+        # Process through alert manager
+        alert = alert_manager.process_warrant_output(
+            warrant_output,
+            lstm_score=ml_result["lstm_score"],
+            anomaly_score=ml_result["anomaly_score"],
+            current_vpm=mm.VPM,
+            queue_depth=mm.queue_depth,
+        )
+
+        # Check for EARLY_RED
+        if alert is None or alert.level != "RED":
+            alert_manager.process_extreme_risk(
+                junction_id=junction_id,
+                arm_id=arm_id,
+                extreme_congestion_risk=ml_result["extreme_congestion_risk"],
+                queue_depth=mm.queue_depth,
+                mean_bbox_growth_rate=mm.mean_bbox_growth_rate,
+                current_vpm=mm.VPM,
+                stopped_ratio=mm.stopped_ratio,
+                occupancy_pct=mm.occupancy_pct,
+            )
+
+        # Update shared state and broadcast
+        _state.update_latest_metrics(junction_id, arm_id, features)
+        _broadcast_from_thread(ws_manager.send_metrics(junction_id, arm_id, {
+            **features,
+            "lstm_score": ml_result["lstm_score"],
+            "anomaly_score": ml_result["anomaly_score"],
+            "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
+            "alert_level": warrant_output.alert_level,
+        }))
+
+        logger.debug(
+            "%s: VPM=%d queue=%d lstm=%.3f anomaly=%.4f extreme=%.3f alert=%s",
+            camera_id, mm.VPM, mm.queue_depth,
+            ml_result["lstm_score"], ml_result["anomaly_score"],
+            ml_result["extreme_congestion_risk"], warrant_output.alert_level,
+        )
 
 
 @asynccontextmanager
@@ -259,6 +396,7 @@ async def lifespan(app: FastAPI):
     global _loop
     _loop = asyncio.get_event_loop()
 
+    load_admin_overrides()
     _init_pipeline()
 
     # Check if any cameras have real video sources
@@ -280,6 +418,18 @@ async def lifespan(app: FastAPI):
         ingestion = IngestionManager()
         ingestion.start_all()
         logger.info("Video ingestion started")
+
+        # Start one processing thread per camera that has a video source
+        for camera_id, reader in ingestion.readers.items():
+            jid, aid = camera_id.split("_", 1)
+            proc_thread = threading.Thread(
+                target=_run_camera_pipeline,
+                args=(jid, aid, ingestion),
+                daemon=True,
+                name=f"pipeline-{camera_id}",
+            )
+            proc_thread.start()
+            logger.info("Processing pipeline started for %s", camera_id)
 
     yield
 
@@ -303,6 +453,7 @@ app.add_middleware(
 )
 
 app.include_router(router)
+app.include_router(admin_router)
 
 # Serve evidence files
 if config.EVIDENCE_DIR.exists():

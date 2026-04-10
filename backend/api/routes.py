@@ -59,12 +59,14 @@ def list_junctions():
                 "name": arm_cfg["name"],
                 "gps_lat": arm_cfg["gps_lat"],
                 "gps_lon": arm_cfg["gps_lon"],
+                "road_path": arm_cfg.get("road_path", []),
                 "alert_level": level,
             })
         result.append({
             "junction_id": jid,
             "name": jdata["name"],
             "type": jdata["type"],
+            "peak_periods": list(jdata.get("peak_periods", config.PEAK_PERIODS)),
             "arms": arms,
         })
     return result

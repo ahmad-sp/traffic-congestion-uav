@@ -305,10 +305,17 @@ def generate_arm_data(
     df = pd.DataFrame(rows)
     df.drop(columns=["_dt"], inplace=True)
 
-    # Compute extreme_congestion_future label (lookahead)
+    # Compute extreme_congestion_future label (lookahead).
+    #
+    # IMPORTANT: the label must be 1 only when an ABNORMAL congestion event
+    # (OFF_PEAK_JAM or PEAK_EXCESS) is starting within the next forecast window.
+    # Using `queue_depth > 0` here would be wrong: normal daytime traffic already
+    # has queue_depth=1–5 on most rows, making the label 1 for ~70% of all data
+    # and causing the LSTM to learn "always output 1 during daytime hours."
     df["extreme_congestion_future"] = 0
     for i in range(len(df) - EXTREME_CONGESTION_FORECAST_WINDOW):
-        if df["queue_depth"].iloc[i + 1 : i + 1 + EXTREME_CONGESTION_FORECAST_WINDOW].max() > 0:
+        future_labels = df["label"].iloc[i + 1 : i + 1 + EXTREME_CONGESTION_FORECAST_WINDOW]
+        if (future_labels != "NORMAL").any():
             df.at[i, "extreme_congestion_future"] = 1
 
     return df

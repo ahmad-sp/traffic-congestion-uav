@@ -51,6 +51,8 @@ class AlertManager:
         # Per-arm state
         self._current_level: dict[str, str] = {}  # camera_id → level
         self._last_alert_time: dict[str, datetime] = {}
+        self._last_early_red_time: dict[str, datetime] = {}  # separate debounce for EARLY_RED
+        self._last_red_time: dict[str, datetime] = {}  # cooldown for RED (prevents oscillation drones)
         self._clean_minutes: dict[str, int] = {}  # consecutive GREEN minutes
 
         # Alert log
@@ -98,8 +100,14 @@ class AlertManager:
         else:
             self._clean_minutes[key] = 0
 
-        # --- Escalation: always immediate ---
+        # --- Escalation: immediate, but RED has a cooldown to prevent
+        #     oscillation-driven drone spam (GREEN→RED→GREEN→RED…) ---
         if new_order > current_order:
+            if new_level == "RED":
+                last_red = self._last_red_time.get(key)
+                if last_red and (now - last_red) < timedelta(minutes=config.ALERT_DEBOUNCE_MINUTES):
+                    logger.debug("%s: RED escalation suppressed — cooldown active", key)
+                    return None
             logger.info("%s: ESCALATING %s → %s", key, current_level, new_level)
             return self._issue_alert(key, output, lstm_score, anomaly_score,
                                      current_vpm, queue_depth, now)
@@ -148,11 +156,11 @@ class AlertManager:
             and queue_depth == 0
             and current_order < LEVEL_ORDER["RED"]
         ):
-            # Debounce check
-            if current_level == "EARLY_RED":
-                last = self._last_alert_time.get(key)
-                if last and (now - last) < timedelta(minutes=config.ALERT_DEBOUNCE_MINUTES):
-                    return None
+            # Debounce check — unconditional, regardless of current state
+            # Uses its own timer so de-escalation back to GREEN doesn't bypass the window
+            last = self._last_early_red_time.get(key)
+            if last and (now - last) < timedelta(minutes=config.ALERT_DEBOUNCE_MINUTES):
+                return None
 
             logger.info(
                 "EARLY_RED: Early extreme congestion detected "
@@ -178,6 +186,7 @@ class AlertManager:
 
             self._current_level[key] = "EARLY_RED"
             self._last_alert_time[key] = now
+            self._last_early_red_time[key] = now
             self._alerts.append(alert)
 
             if self.on_alert:
@@ -226,6 +235,8 @@ class AlertManager:
 
         self._current_level[key] = output.alert_level
         self._last_alert_time[key] = now
+        if output.alert_level == "RED":
+            self._last_red_time[key] = now
         self._alerts.append(alert)
 
         logger.info("Alert issued: %s level=%s warrants=%s type=%s",

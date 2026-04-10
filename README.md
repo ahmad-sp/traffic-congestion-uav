@@ -1092,10 +1092,8 @@ python -m scripts.train_autoencoder \
 ### `train_lstm.py` — train the congestion forecaster
 
 ```bash
-python -m scripts.train_lstm \
-    [--data data/synthetic/all_arms_combined.csv] \
-    [--epochs 50] \
-    [--device cpu]
+python -m scripts.train_lstm --data data/synthetic/all_arms_combined.csv --epochs 50 --device cpu
+
 ```
 
 - Groups by `camera_id`, creates 60-step sliding-window sequences per arm.
