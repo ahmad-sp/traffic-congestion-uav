@@ -32,6 +32,7 @@ from backend.alerts.drone_trigger import DroneTriggerManager
 from backend.warrants.engine import WarrantEngine
 from backend.warrants.baseline import load_baseline
 from backend.models.inference import InferenceRunner
+from backend.pipeline.roi import ROIFilter, load_roi_filters
 
 logging.basicConfig(level=config.LOG_LEVEL, format=config.LOG_FORMAT)
 logger = logging.getLogger(__name__)
@@ -41,6 +42,7 @@ alert_manager = AlertManager()
 drone_manager = DroneTriggerManager()
 warrant_engines: dict[str, WarrantEngine] = {}
 inference_runner: InferenceRunner | None = None
+roi_filters: dict[str, ROIFilter] = {}  # camera_id → ROIFilter
 
 # Event loop reference for cross-thread WebSocket broadcasting
 _loop: asyncio.AbstractEventLoop | None = None
@@ -112,11 +114,20 @@ def on_early_red_callback(event: dict):
 
 def _init_pipeline():
     """Initialize all pipeline components."""
-    global inference_runner
+    global inference_runner, roi_filters
 
     # Init DB
     init_db()
     logger.info("Database initialized")
+
+    # Load per-camera ROI masks
+    roi_filters = load_roi_filters()
+    if roi_filters:
+        logger.info("ROI filters loaded for %d camera(s): %s",
+                     len(roi_filters), ", ".join(roi_filters.keys()))
+    else:
+        logger.warning("No ROI masks configured — all cameras will process the full frame. "
+                       "Run 'python scripts/setup_roi.py --all' to calibrate.")
 
     # Load baseline
     load_baseline()
@@ -285,6 +296,13 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
         logger.error("No warrant engine for %s — camera pipeline will not start", camera_id)
         return
 
+    # ROI filter for this camera (None = full frame)
+    roi = roi_filters.get(camera_id)
+    if roi:
+        logger.info("ROI filter active for %s", camera_id)
+    else:
+        logger.warning("No ROI configured for %s — processing full frame", camera_id)
+
     peak_periods = config.JUNCTIONS.get(junction_id, {}).get("peak_periods", config.PEAK_PERIODS)
 
     while True:
@@ -306,8 +324,10 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
             )
             logger.info("Aggregator created for %s (%dx%d)", camera_id, w, h)
 
-        # --- Detect → track → per-frame metrics ---
+        # --- Detect → ROI filter → track → per-frame metrics ---
         detections = detector.detect(frame)
+        if roi:
+            detections = roi.filter(detections)
         det_array = detector.detections_to_array(detections)
         tracks = tracker.update(det_array, frame)
         aggregator.compute_frame_metrics(tracks, packet.timestamp)

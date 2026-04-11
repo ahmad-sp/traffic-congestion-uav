@@ -29,6 +29,7 @@ class FrameMetrics:
     timestamp: float
     vehicle_count: int = 0
     near_zone_count: int = 0
+    near_zone_stopped_count: int = 0  # stopped vehicles in near zone (queue signal)
     far_zone_count: int = 0
     stopped_count: int = 0
     mean_bbox_area: float = 0.0
@@ -108,8 +109,11 @@ class MetricsAggregator:
         for t in tracks:
             areas.append(t.bbox_area)
 
-            if t.centroid_y > near_y:
+            in_near_zone = t.centroid_y > near_y
+            if in_near_zone:
                 fm.near_zone_count += 1
+                if t.is_stopped:
+                    fm.near_zone_stopped_count += 1
             elif t.centroid_y < far_y:
                 fm.far_zone_count += 1
 
@@ -134,8 +138,11 @@ class MetricsAggregator:
         total_area = sum(areas)
         fm.occupancy_ratio = (total_area / self.frame_area) * 100.0 if self.frame_area > 0 else 0.0
 
-        # Track near-zone presence for queue depth
-        if fm.near_zone_count > 0:
+        # Track near-zone STOPPED presence for queue depth.
+        # Only frames with physically stopped vehicles in the near zone
+        # contribute to the sustained-presence timer.  Moving vehicles
+        # passing through should NOT inflate queue_depth.
+        if fm.near_zone_stopped_count > 0:
             self._near_zone_timestamps.append(timestamp)
 
         # Update counting line
@@ -176,14 +183,16 @@ class MetricsAggregator:
         # VPM from counting line
         vpm = self.counting_line.reset_count()
 
-        # Queue depth: near-zone vehicles sustained over threshold
+        # Queue depth: STOPPED vehicles in near zone sustained over threshold.
+        # Only stopped vehicles contribute — moving traffic passing through
+        # the near zone does not indicate a queue.
         queue_depth = 0
         if self._near_zone_timestamps:
             duration = self._near_zone_timestamps[-1] - self._near_zone_timestamps[0]
             if duration >= config.QUEUE_DEPTH_SUSTAIN_SECONDS:
-                # Average near-zone count
-                nz_counts = [fm.near_zone_count for fm in self._frame_metrics if fm.near_zone_count > 0]
-                queue_depth = int(np.mean(nz_counts)) if nz_counts else 0
+                nz_stopped = [fm.near_zone_stopped_count for fm in self._frame_metrics
+                              if fm.near_zone_stopped_count > 0]
+                queue_depth = int(np.mean(nz_stopped)) if nz_stopped else 0
 
         # Averages across frames
         total_vehicles = sum(fm.vehicle_count for fm in self._frame_metrics)

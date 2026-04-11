@@ -80,16 +80,16 @@ class CameraReader:
 
         source_fps = cap.get(cv2.CAP_PROP_FPS) or 30.0
         frame_skip = max(1, int(round(source_fps / self.target_fps)))
+        is_local_file = not self.source.startswith("rtsp")
 
-        logger.info("%s source FPS=%.1f, skip=%d → effective ~%d FPS",
-                    self.camera_id, source_fps, frame_skip, self.target_fps)
+        logger.info("%s source FPS=%.1f, skip=%d → effective ~%d FPS (local_file=%s)",
+                    self.camera_id, source_fps, frame_skip, self.target_fps, is_local_file)
 
         frame_idx = 0
         while not self._stop_event.is_set():
             ret, frame = cap.read()
             if not ret:
-                # If reading a file, loop back to start (demo mode)
-                if not self.source.startswith("rtsp"):
+                if is_local_file:
                     cap.set(cv2.CAP_PROP_POS_FRAMES, 0)
                     logger.debug("Looping video for %s", self.camera_id)
                     continue
@@ -114,15 +114,29 @@ class CameraReader:
                 frame_number=self._frame_count,
             )
 
-            try:
-                self.frame_queue.put_nowait(packet)
-            except queue.Full:
-                # Drop oldest frame to keep up
+            if is_local_file:
+                # Local file: never drop frames — sequential delivery is
+                # critical for ByteTrack.  Block until the consumer frees
+                # a queue slot, and pace to target FPS so the tracker sees
+                # temporally consistent inter-frame motion.
+                while not self._stop_event.is_set():
+                    try:
+                        self.frame_queue.put(packet, timeout=0.5)
+                        break
+                    except queue.Full:
+                        continue
+                # Pace delivery; use event.wait so shutdown is responsive
+                self._stop_event.wait(self.frame_interval)
+            else:
+                # RTSP: drop oldest frame to minimise latency
                 try:
-                    self.frame_queue.get_nowait()
-                except queue.Empty:
-                    pass
-                self.frame_queue.put_nowait(packet)
+                    self.frame_queue.put_nowait(packet)
+                except queue.Full:
+                    try:
+                        self.frame_queue.get_nowait()
+                    except queue.Empty:
+                        pass
+                    self.frame_queue.put_nowait(packet)
 
         cap.release()
 

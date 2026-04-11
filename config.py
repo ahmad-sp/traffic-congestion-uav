@@ -33,6 +33,9 @@ FRAME_RATE = int(os.getenv("FRAME_RATE", "5"))          # FPS to process
 DEMO_VIDEO_PATH = os.getenv("DEMO_VIDEO_PATH", "")      # fallback .mp4 when no RTSP
 FRAME_QUEUE_MAXSIZE = 128                                 # per-camera frame buffer
 
+# Per-camera ROI polygons (set up via scripts/setup_roi.py)
+ROI_MASKS_PATH = DATA_DIR / "roi_masks.json"
+
 # ─────────────────────────────────────────────
 # YOLO DETECTION
 # ─────────────────────────────────────────────

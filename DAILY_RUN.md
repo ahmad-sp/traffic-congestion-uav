@@ -34,6 +34,88 @@ export JCT01_ARM_NORTH_RTSP="rtsp://user:pass@192.168.1.10/stream"
 python -m backend.main
 ```
 
+## Test with MP4 video (visual preview)
+
+Run YOLO + ROI detection on an MP4 with a live OpenCV preview window.
+Metrics and ML predictions are also pushed to the frontend dashboard.
+
+```bash
+# Terminal 1 — backend (needed for frontend metrics)
+python -m backend.main
+
+# Terminal 2 — frontend
+cd frontend && npm run dev
+
+# Terminal 3 — preview
+python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM_NORTH
+```
+
+**What the preview window shows:**
+- Green bounding boxes = vehicles **inside** the ROI (tracked)
+- Red bounding boxes = vehicles **outside** the ROI (ignored)
+- Green polygon overlay = ROI region
+- Yellow horizontal line = counting line
+- Top-left HUD = frame count, detections, VPM, queue depth, LSTM score, anomaly score, alert level
+
+**Draw a new ROI interactively:**
+
+```bash
+python scripts/preview_detection.py --video path/to/video.mp4 --draw-roi
+```
+
+Click polygon vertices around the target lane, press ENTER to confirm.
+
+**Draw ROI and save it for the live pipeline:**
+
+```bash
+python scripts/preview_detection.py --video path/to/video.mp4 --draw-roi --save-roi JCT01_ARM_NORTH
+```
+
+**Headless mode (metrics to frontend only, no OpenCV window):**
+
+```bash
+python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM_NORTH --no-preview
+```
+
+**Keyboard controls:**
+
+| Key | Action |
+|-----|--------|
+| SPACE | Pause / resume |
+| q, ESC | Quit |
+| s | Save current frame as PNG screenshot |
+
+## Video with ROI saving (For videos)
+
+```bash
+# ROI Calibration
+python scripts/preview_detection.py --video "C:\Users\PC\Desktop\koduvally data\site1\00006.mp4" --camera JCT01_ARM_NORTH --draw-roi --save-roi JCT01_ARM_NORTH
+
+# Start Video for metrics
+$env:DEMO_VIDEO_PATH="C:\Users\PC\Desktop\koduvally data\site1\00006.mp4"
+python -m backend.main
+
+```
+
+
+## ROI calibration (for live cameras)
+
+```bash
+# Calibrate ROI for one camera
+python scripts/setup_roi.py --camera JCT01_ARM_NORTH --source path/to/video.mp4
+
+# Calibrate all cameras
+python scripts/setup_roi.py --all
+
+# Check which cameras have ROIs
+python scripts/setup_roi.py --list
+
+# Clear a camera's ROI
+python scripts/setup_roi.py --clear JCT01_ARM_NORTH
+```
+
+Saved ROIs are stored in `data/roi_masks.json` and loaded automatically when the backend starts.
+
 ## Key URLs
 
 | What | URL |

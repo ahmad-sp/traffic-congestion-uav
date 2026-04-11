@@ -33,6 +33,23 @@ class ConfigUpdate(BaseModel):
     value: float | str | int
 
 
+class PreviewPush(BaseModel):
+    """Payload pushed by scripts/preview_detection.py each minute."""
+    junction_id: str
+    arm_id: str
+    VPM: int
+    queue_depth: int
+    stopped_ratio: float = 0.0
+    occupancy_pct: float = 0.0
+    mean_bbox_area: float = 0.0
+    max_bbox_area: float = 0.0
+    approach_flow: float = 0.0
+    lstm_score: float = 0.0
+    anomaly_score: float = 0.0
+    extreme_congestion_risk: float = 0.0
+    alert_level: str = "GREEN"
+
+
 # ─── Health ───
 
 @router.get("/health")
@@ -242,6 +259,20 @@ def update_config(update: ConfigUpdate):
     setattr(config, update.key, type(getattr(config, update.key))(update.value))
     logger.info("Config updated: %s = %s", update.key, update.value)
     return {"key": update.key, "value": update.value}
+
+
+# ─── Preview Push (used by scripts/preview_detection.py) ───
+
+@router.post("/api/preview/push")
+async def preview_push(data: PreviewPush):
+    """Accept metrics from the preview script and broadcast to the frontend via WebSocket."""
+    from backend.api._state import update_latest_metrics
+    from backend.api.websocket import ws_manager
+
+    payload = data.model_dump()
+    update_latest_metrics(data.junction_id, data.arm_id, payload)
+    await ws_manager.send_metrics(data.junction_id, data.arm_id, payload)
+    return {"status": "ok"}
 
 
 # ─── Early Extreme Events ───

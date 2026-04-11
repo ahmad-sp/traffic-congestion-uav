@@ -123,22 +123,18 @@ export default function RoadMap({
                     {/* Road line — thick traffic layer if road_path defined, else fallback thin line */}
                     {hasRoadPath ? (
                       <Polyline
+                        key={`${key}_road_${color}`}
                         positions={arm.road_path}
-                        color={color}
-                        weight={8}
-                        opacity={0.85}
-                        lineCap="round"
-                        lineJoin="round"
+                        pathOptions={{ color, weight: 8, opacity: 0.85, lineCap: 'round', lineJoin: 'round' }}
                         eventHandlers={{
                           click: () => onSelectArm({ junction_id: junction.junction_id, arm_id: arm.arm_id }),
                         }}
                       />
                     ) : (
                       <Polyline
+                        key={`${key}_line_${color}`}
                         positions={[[jLat, jLon], [arm.gps_lat, arm.gps_lon]]}
-                        color={color}
-                        weight={5}
-                        opacity={0.8}
+                        pathOptions={{ color, weight: 5, opacity: 0.8 }}
                         eventHandlers={{
                           click: () => onSelectArm({ junction_id: junction.junction_id, arm_id: arm.arm_id }),
                         }}

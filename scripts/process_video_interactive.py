@@ -36,6 +36,7 @@ import config
 from backend.pipeline.detection import VehicleDetector
 from backend.pipeline.tracking import VehicleTracker
 from backend.pipeline.metrics import MetricsAggregator
+from backend.pipeline.roi import save_roi
 
 # ---------------------------------------------------------------------------
 # ROI selection
@@ -125,19 +126,16 @@ def select_roi(first_frame: np.ndarray) -> np.ndarray:
 
 def detection_in_roi(det, contour: np.ndarray) -> bool:
     """
-    Return True if any of the 3 bottom-edge points of the bounding box
-    are inside or touching the polygon contour.
+    Return True if >= 3 of 5 evenly-spaced points along the bottom
+    edge of the bounding box fall inside the polygon contour.
     """
-    x1, y1, x2, y2 = det.x1, det.y1, det.x2, det.y2
-    bottom_points = [
-        (float(x1), float(y2)),                      # bottom-left
-        (float((x1 + x2) / 2), float(y2)),           # bottom-center
-        (float(x2), float(y2)),                       # bottom-right
-    ]
-    for px, py in bottom_points:
-        if cv2.pointPolygonTest(contour, (px, py), False) >= 0:
-            return True
-    return False
+    x1, y2, x2 = float(det.x1), float(det.y2), float(det.x2)
+    inside = 0
+    for i in range(5):
+        px = x1 + (x2 - x1) * i / 4
+        if cv2.pointPolygonTest(contour, (px, y2), False) >= 0:
+            inside += 1
+    return inside >= 3
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +354,10 @@ def main():
         default=str(TRAFFIC_SYSTEM_DIR / "data"),
         help="Directory to save the extracted CSV (default: traffic_system/data/).",
     )
+    parser.add_argument(
+        "--save-roi", action="store_true",
+        help="Also save the drawn ROI to data/roi_masks.json for use by the live pipeline.",
+    )
     args = parser.parse_args()
 
     output_dir = Path(args.output_dir).resolve()
@@ -389,6 +391,13 @@ def main():
 
     # ROI selection
     contour = select_roi(first_frame)
+
+    # Optionally persist ROI for the live pipeline
+    if args.save_roi:
+        camera_id = f"{junction_id}_{arm_id}"
+        points = contour.reshape(-1, 2).tolist()
+        save_roi(camera_id, points)
+        print(f"[ROI] Saved to {config.ROI_MASKS_PATH} for live pipeline reuse.")
 
     # Process
     process_video(video_path, contour, output_dir, junction_id, arm_id,
