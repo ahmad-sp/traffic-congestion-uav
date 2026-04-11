@@ -43,6 +43,7 @@ drone_manager = DroneTriggerManager()
 warrant_engines: dict[str, WarrantEngine] = {}
 inference_runner: InferenceRunner | None = None
 roi_filters: dict[str, ROIFilter] = {}  # camera_id → ROIFilter
+_show_preview: bool = False  # set True via startup prompt
 
 # Event loop reference for cross-thread WebSocket broadcasting
 _loop: asyncio.AbstractEventLoop | None = None
@@ -269,7 +270,45 @@ def _run_demo_simulation():
     logger.info("Demo simulation complete — all cameras processed")
 
 
-def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
+def _draw_preview(frame, tracks, roi_contour, counting_line_y):
+    """Annotate a frame with ROI polygon, counting line, and tracked vehicles.
+
+    All OpenCV drawing happens on a copy so the original frame is untouched.
+    Returns the annotated image.
+    """
+    import cv2
+
+    display = frame.copy()
+    h, w = display.shape[:2]
+
+    # ROI polygon — translucent green fill + solid border
+    if roi_contour is not None:
+        overlay = display.copy()
+        cv2.fillPoly(overlay, [roi_contour], (0, 120, 0))
+        cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
+        cv2.polylines(display, [roi_contour], True, (0, 255, 0), 2)
+
+    # Counting line — yellow horizontal
+    line_y = int(h * counting_line_y)
+    cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
+    cv2.putText(display, "COUNTING LINE", (10, line_y - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+    # Tracked vehicles — green bbox + track ID
+    for t in tracks:
+        bx1, by1, bx2, by2 = (int(v) for v in t.bbox)
+        cv2.rectangle(display, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
+        label = f"ID:{t.track_id}"
+        if t.is_stopped:
+            label += " [STOPPED]"
+        cv2.putText(display, label, (bx1, by1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+    return display
+
+
+def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
+                         show_preview: bool = False) -> None:
     """
     Per-camera processing thread for real video mode.
 
@@ -280,12 +319,13 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
     The MetricsAggregator is lazily created after the first frame arrives so
     we know the actual frame dimensions.
     """
+    import cv2
     from backend.pipeline.detection import VehicleDetector
     from backend.pipeline.tracking import VehicleTracker
     from backend.pipeline.metrics import MetricsAggregator
 
     camera_id = f"{junction_id}_{arm_id}"
-    logger.info("Camera pipeline starting for %s", camera_id)
+    logger.info("Camera pipeline starting for %s (preview=%s)", camera_id, show_preview)
 
     detector = VehicleDetector()
     tracker = VehicleTracker()
@@ -298,11 +338,13 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
 
     # ROI filter for this camera (None = full frame)
     roi = roi_filters.get(camera_id)
+    roi_contour = roi.contour if roi else None
     if roi:
         logger.info("ROI filter active for %s", camera_id)
     else:
         logger.warning("No ROI configured for %s — processing full frame", camera_id)
 
+    counting_line_y = config.COUNTING_LINE_Y_FRACTION
     peak_periods = config.JUNCTIONS.get(junction_id, {}).get("peak_periods", config.PEAK_PERIODS)
 
     while True:
@@ -331,6 +373,12 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion) -> None:
         det_array = detector.detections_to_array(detections)
         tracks = tracker.update(det_array, frame)
         aggregator.compute_frame_metrics(tracks, packet.timestamp)
+
+        # --- Live preview (all OpenCV calls inside this thread) ---
+        if show_preview:
+            display = _draw_preview(frame, tracks, roi_contour, counting_line_y)
+            cv2.imshow(camera_id, display)
+            cv2.waitKey(1)
 
         # --- Per-minute aggregation ---
         if not aggregator.should_aggregate():
@@ -444,7 +492,7 @@ async def lifespan(app: FastAPI):
             jid, aid = camera_id.split("_", 1)
             proc_thread = threading.Thread(
                 target=_run_camera_pipeline,
-                args=(jid, aid, ingestion),
+                args=(jid, aid, ingestion, _show_preview),
                 daemon=True,
                 name=f"pipeline-{camera_id}",
             )
@@ -495,4 +543,8 @@ async def websocket_endpoint(ws: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
+    ans = input("Do you want to show the live video preview window for verification? [y/N]: ").strip().lower()
+    if ans == "y":
+        _show_preview = True
+        print("[PREVIEW] Live OpenCV preview enabled — a window will open per camera.")
     uvicorn.run(app, host=config.API_HOST, port=config.API_PORT)

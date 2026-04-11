@@ -91,10 +91,14 @@ python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM
 # ROI Calibration
 python scripts/preview_detection.py --video "C:\Users\PC\Desktop\koduvally data\site1\00006.mp4" --camera JCT01_ARM_NORTH --draw-roi --save-roi JCT01_ARM_NORTH
 
-# Start Video for metrics
+# Start Video for metrics with only one video
 $env:DEMO_VIDEO_PATH="C:\Users\PC\Desktop\koduvally data\site1\00006.mp4"
 python -m backend.main
 
+#add path to add camera and then set roi
+python scripts/preview_detection.py --video "C:\Users\PC\Desktop\video2.mp4" --camera JCT01_ARM_SOUTH --draw-roi --save-roi JCT01_ARM_SOUTH
+
+python -m backend.main
 ```
 
 

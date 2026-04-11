@@ -591,6 +591,111 @@ function AddCameraTab({ junctions, onJunctionUpdate }) {
   )
 }
 
+// ─── Tab 5: Update Stream ───
+
+function UpdateStreamTab({ junctions }) {
+  const [selectedJid, setSelectedJid] = useState('')
+  const [selectedAid, setSelectedAid] = useState('')
+  const [rtspUrl, setRtspUrl] = useState('')
+  const [status, setStatus] = useState(null)
+
+  const selectedJunction = junctions.find((j) => j.junction_id === selectedJid)
+
+  function selectJunction(jid) {
+    setSelectedJid(jid)
+    setSelectedAid('')
+    setStatus(null)
+  }
+
+  async function updateStream() {
+    setStatus(null)
+    try {
+      const res = await fetch(
+        `${API}/admin/junctions/${selectedJid}/arms/${selectedAid}/stream`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ rtsp_url: rtspUrl.trim() }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) {
+        setStatus({ ok: false, msg: data.detail || 'Error updating stream' })
+        return
+      }
+      setStatus({ ok: true, msg: `Stream updated for ${selectedJid}/${selectedAid}` })
+    } catch {
+      setStatus({ ok: false, msg: 'Network error' })
+    }
+  }
+
+  return (
+    <div className="space-y-3">
+      <InfoBanner text="Updates the RTSP URL or local file path in memory and on disk. A server restart is required to reconnect the live video feed." />
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Junction</label>
+          <select
+            value={selectedJid}
+            onChange={(e) => selectJunction(e.target.value)}
+            className="bg-gray-700 text-gray-200 text-sm rounded px-2 py-1.5 w-full"
+          >
+            <option value="">Select…</option>
+            {junctions.map((j) => (
+              <option key={j.junction_id} value={j.junction_id}>
+                {j.junction_id} — {j.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Camera arm</label>
+          <select
+            value={selectedAid}
+            onChange={(e) => { setSelectedAid(e.target.value); setStatus(null) }}
+            disabled={!selectedJunction}
+            className="bg-gray-700 text-gray-200 text-sm rounded px-2 py-1.5 w-full disabled:opacity-50"
+          >
+            <option value="">Select…</option>
+            {(selectedJunction?.arms || []).map((a) => (
+              <option key={a.arm_id} value={a.arm_id}>{a.arm_id} — {a.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {selectedJid && selectedAid && (
+        <>
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">New RTSP URL or file path</label>
+            <input
+              value={rtspUrl}
+              onChange={(e) => setRtspUrl(e.target.value)}
+              placeholder="rtsp://user:pass@192.168.1.10/stream  or  /path/to/video.mp4"
+              className="bg-gray-700 text-gray-200 text-sm rounded px-2 py-1.5 w-full"
+            />
+          </div>
+
+          <button
+            onClick={updateStream}
+            disabled={!rtspUrl.trim()}
+            className="bg-green-700 hover:bg-green-600 text-white text-sm px-4 py-1.5 rounded w-full disabled:opacity-40"
+          >
+            Update Stream
+          </button>
+        </>
+      )}
+
+      {status && (
+        <p className={`text-xs ${status.ok ? 'text-green-400' : 'text-red-400'}`}>
+          {status.msg}
+        </p>
+      )}
+    </div>
+  )
+}
+
 // ─── Main AdminPanel ───
 
 const TABS = [
@@ -598,6 +703,7 @@ const TABS = [
   { id: 'roads', label: 'Draw Roads' },
   { id: 'junction', label: 'New Junction' },
   { id: 'camera', label: 'Add Camera' },
+  { id: 'stream', label: 'Update Stream' },
 ]
 
 export default function AdminPanel({
@@ -664,6 +770,9 @@ export default function AdminPanel({
         )}
         {activeTab === 'camera' && (
           <AddCameraTab junctions={junctions} onJunctionUpdate={onJunctionUpdate} />
+        )}
+        {activeTab === 'stream' && (
+          <UpdateStreamTab junctions={junctions} />
         )}
       </div>
     </div>

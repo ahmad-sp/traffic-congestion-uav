@@ -21,7 +21,8 @@
           ]
         ],
         "gps_lat": 51.50768605401713,
-        "gps_lon": -0.13087932325346333
+        "gps_lon": -0.13087932325346333,
+        "rtsp_url": "C:\\Users\\PC\\Desktop\\koduvally data\\site1\\00005.mp4"
       },
       "ARM_SOUTH": {
         "road_path": [
@@ -39,7 +40,8 @@
           ]
         ],
         "gps_lat": 51.50855415075942,
-        "gps_lon": -0.12557856642502865
+        "gps_lon": -0.12557856642502865,
+        "rtsp_url": "C:\\Users\\PC\\Desktop\\koduvally data\\site2\\00002.mp4"
       },
       "ARM_EAST": {
         "road_path": [

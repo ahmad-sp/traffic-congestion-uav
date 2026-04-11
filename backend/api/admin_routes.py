@@ -104,6 +104,10 @@ class NewJunctionRequest(BaseModel):
     first_arm: NewArmRequest
 
 
+class StreamUpdate(BaseModel):
+    rtsp_url: str
+
+
 # ─── Endpoints ───
 
 @admin_router.put("/junctions/{junction_id}/peak_periods")
@@ -252,6 +256,25 @@ def create_junction(req: NewJunctionRequest):
             }
         ],
     }
+
+
+@admin_router.put("/junctions/{junction_id}/arms/{arm_id}/stream")
+def update_arm_stream(junction_id: str, arm_id: str, req: StreamUpdate):
+    """Update the RTSP URL (or local file path) for an existing camera arm."""
+    if junction_id not in config.JUNCTIONS:
+        raise HTTPException(404, f"Junction {junction_id} not found")
+    if arm_id not in config.JUNCTIONS[junction_id]["arms"]:
+        raise HTTPException(404, f"Arm {arm_id} not found in junction {junction_id}")
+
+    config.JUNCTIONS[junction_id]["arms"][arm_id]["rtsp_url"] = req.rtsp_url
+
+    _overrides.setdefault(junction_id, {}).setdefault("arms", {}).setdefault(arm_id, {}).update({
+        "rtsp_url": req.rtsp_url,
+    })
+    _save_overrides()
+
+    logger.info("Updated stream for %s/%s: %s", junction_id, arm_id, req.rtsp_url)
+    return {"junction_id": junction_id, "arm_id": arm_id, "rtsp_url": req.rtsp_url}
 
 
 @admin_router.post("/junctions/{junction_id}/arms")
