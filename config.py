@@ -31,6 +31,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{DATA_DIR / 'traffic.db'}")
 # ─────────────────────────────────────────────
 FRAME_RATE = int(os.getenv("FRAME_RATE", "5"))          # FPS to process
 DEMO_VIDEO_PATH = os.getenv("DEMO_VIDEO_PATH", "")      # fallback .mp4 when no RTSP
+DEMO_MODE = os.getenv("DEMO_MODE", "false").lower() == "true"  # force synthetic data mode
 FRAME_QUEUE_MAXSIZE = 128                                 # per-camera frame buffer
 
 # Per-camera ROI polygons (set up via scripts/setup_roi.py)
@@ -213,28 +214,28 @@ JUNCTIONS = {
                 "name": "Main St Northbound Approach",
                 "gps_lat": 51.5074,
                 "gps_lon": -0.1278,
-                "rtsp_url": os.getenv("JCT01_ARM_NORTH_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT01_ARM_NORTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_SOUTH": {
                 "name": "Main St Southbound Approach",
                 "gps_lat": 51.5064,
                 "gps_lon": -0.1278,
-                "rtsp_url": os.getenv("JCT01_ARM_SOUTH_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT01_ARM_SOUTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_EAST": {
                 "name": "Oak Ave Eastbound Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1268,
-                "rtsp_url": os.getenv("JCT01_ARM_EAST_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT01_ARM_EAST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_WEST": {
                 "name": "Oak Ave Westbound Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1288,
-                "rtsp_url": os.getenv("JCT01_ARM_WEST_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT01_ARM_WEST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
         },
@@ -248,21 +249,21 @@ JUNCTIONS = {
                 "name": "High Rd Northbound Approach",
                 "gps_lat": 51.5120,
                 "gps_lon": -0.1400,
-                "rtsp_url": os.getenv("JCT02_ARM_NORTH_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT02_ARM_NORTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_SOUTH": {
                 "name": "High Rd Southbound Approach",
                 "gps_lat": 51.5110,
                 "gps_lon": -0.1400,
-                "rtsp_url": os.getenv("JCT02_ARM_SOUTH_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT02_ARM_SOUTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_EAST": {
                 "name": "Park Ln Eastbound Approach",
                 "gps_lat": 51.5115,
                 "gps_lon": -0.1390,
-                "rtsp_url": os.getenv("JCT02_ARM_EAST_RTSP", ""),
+                #"rtsp_url": os.getenv("JCT02_ARM_EAST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
         },

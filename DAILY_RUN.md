@@ -49,6 +49,12 @@ cd frontend && npm run dev
 # Terminal 3 — preview
 python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM_NORTH
 ```
+## Test with Synthetic data
+
+```bash
+$env:DEMO_MODE="true"
+python -m backend.main
+
 
 **What the preview window shows:**
 - Green bounding boxes = vehicles **inside** the ROI (tracked)

@@ -92,3 +92,31 @@ python -m scripts.train_lstm \
 ```
 
 Use `--device cuda:0` if a GPU is available. Use `--epochs` to adjust training length; the scripts save the best checkpoint (lowest validation loss) automatically.
+
+# Training with new Site with Calibration
+
+## How data collection works:
+
+### Step 1 — Run server normally at the new site (video or demo mode)   
+```bash 
+  python -m backend.main
+  Every minute, metrics are automatically saved to data/traffic.db.   
+```
+### Step 2 — After 2+ weeks, export to CSV
+```bash
+  # All data
+  python -m scripts.export_training_data
+
+  # Only last 14 days for a specific junction
+
+  python -m scripts.export_training_data --junction JCT02 --days 14   
+  --out data/jct02_collected.csv
+```
+### Step 3 — Calibrate thresholds
+  ```bash
+  python -m scripts.calibrate_site --data data/collected_site_data.csv
+```
+### Step 4 — Restart server
+  ```bash
+  python -m backend.main
+  ```

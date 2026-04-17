@@ -8,7 +8,7 @@ from pathlib import Path
 
 from sqlalchemy import (
     Column, Integer, Float, String, Boolean, DateTime, JSON,
-    create_engine, Index,
+    create_engine, Index, text,
 )
 from sqlalchemy.orm import DeclarativeBase, sessionmaker
 
@@ -41,6 +41,7 @@ class MinuteMetricRecord(Base):
     is_peak_hour = Column(Integer, default=0)
     hour_of_week = Column(Integer, default=0)
     mean_speed_proxy = Column(Float, default=0.0)
+    mean_bbox_growth_rate = Column(Float, default=0.0)
     extreme_congestion_risk = Column(Float, nullable=True, default=None)
 
     __table_args__ = (
@@ -140,8 +141,25 @@ SessionLocal = sessionmaker(bind=engine)
 
 
 def init_db():
-    """Create all tables."""
+    """Create all tables and apply any missing column migrations."""
     Base.metadata.create_all(engine)
+    _migrate_add_missing_columns()
+
+
+def _migrate_add_missing_columns():
+    """Add new columns to existing tables without dropping data."""
+    with engine.connect() as conn:
+        # Check and add mean_bbox_growth_rate to minute_metrics
+        existing = [
+            row[1] for row in conn.execute(
+                text("PRAGMA table_info(minute_metrics)")
+            )
+        ]
+        if "mean_bbox_growth_rate" not in existing:
+            conn.execute(text(
+                "ALTER TABLE minute_metrics ADD COLUMN mean_bbox_growth_rate FLOAT DEFAULT 0.0"
+            ))
+            conn.commit()
 
 
 def get_db():

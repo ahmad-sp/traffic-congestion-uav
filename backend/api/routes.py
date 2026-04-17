@@ -130,6 +130,8 @@ def get_metrics(junction_id: str, arm_id: str,
             "is_peak_hour": r.is_peak_hour,
             "mean_speed_proxy": r.mean_speed_proxy,
             "extreme_congestion_risk": r.extreme_congestion_risk,
+            "lstm_score": getattr(r, "lstm_score", None),
+            "baseline_85th": getattr(r, "baseline_85th", None),
         }
         for r in records
     ]

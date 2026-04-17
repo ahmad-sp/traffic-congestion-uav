@@ -250,6 +250,23 @@ def _run_demo_simulation():
                     occupancy_pct=float(row["occupancy_pct"]),
                 )
 
+            # Persist minute metrics to DB
+            try:
+                db = SessionLocal()
+                crud.save_minute_metrics(db, {
+                    "timestamp": row["timestamp"],
+                    "junction_id": jid,
+                    "arm_id": aid,
+                    "camera_id": camera_id,
+                    **features,
+                    "hour_of_week": row["hour_of_week"],
+                    "mean_speed_proxy": 0.0,
+                    "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
+                })
+                db.close()
+            except Exception as e:
+                logger.error("Failed to save minute metrics: %s", e)
+
             # Update latest metrics in shared state (used by REST /junction/{id}/status)
             _state.update_latest_metrics(jid, aid, features)
 
@@ -440,6 +457,23 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
                 occupancy_pct=mm.occupancy_pct,
             )
 
+        # Persist minute metrics to DB
+        try:
+            db = SessionLocal()
+            crud.save_minute_metrics(db, {
+                "timestamp": mm.timestamp,
+                "junction_id": junction_id,
+                "arm_id": arm_id,
+                "camera_id": camera_id,
+                **features,
+                "hour_of_week": mm.hour_of_week,
+                "mean_speed_proxy": float(getattr(mm, "mean_speed_proxy", 0.0)),
+                "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
+            })
+            db.close()
+        except Exception as e:
+            logger.error("Failed to save minute metrics: %s", e)
+
         # Update shared state and broadcast
         _state.update_latest_metrics(junction_id, arm_id, features)
         _broadcast_from_thread(ws_manager.send_metrics(junction_id, arm_id, {
@@ -474,7 +508,7 @@ async def lifespan(app: FastAPI):
         for arm_cfg in jdata["arms"].values()
     )
 
-    if not has_sources and not config.DEMO_VIDEO_PATH:
+    if config.DEMO_MODE or (not has_sources and not config.DEMO_VIDEO_PATH):
         # Run demo simulation in background
         demo_thread = threading.Thread(target=_run_demo_simulation, daemon=True,
                                         name="demo-simulation")
