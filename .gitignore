@@ -34,3 +34,5 @@ evidence/*
 # Models and Generated Data
 data/synthetic/*.csv
 data/roi_preview.png
+
+.claude

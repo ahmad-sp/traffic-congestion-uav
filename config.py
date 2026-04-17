@@ -206,64 +206,64 @@ WS_BASE_URL = os.getenv("WS_BASE_URL", f"ws://localhost:{API_PORT}")
 
 JUNCTIONS = {
     "JCT01": {
-        "name": "Main Street / Oak Avenue",
+        "name": "Koduvally Junction",
         "type": "+",                          # crossroads
         "peak_periods": [(7, 9), (17, 19)],   # morning + evening peak
         "arms": {
             "ARM_NORTH": {
-                "name": "Main St Northbound Approach",
-                "gps_lat": 51.5074,
-                "gps_lon": -0.1278,
-                #"rtsp_url": os.getenv("JCT01_ARM_NORTH_RTSP", ""),
+                "name": "NH-766 Wayanad Approach",
+                "gps_lat": 11.359201,
+                "gps_lon": 75.911547,
+                "rtsp_url": os.getenv("JCT01_ARM_NORTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_SOUTH": {
-                "name": "Main St Southbound Approach",
+                "name": "NH-766 Kozhikode Approach",
                 "gps_lat": 51.5064,
                 "gps_lon": -0.1278,
-                #"rtsp_url": os.getenv("JCT01_ARM_SOUTH_RTSP", ""),
+                "rtsp_url": os.getenv("JCT01_ARM_SOUTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_EAST": {
-                "name": "Oak Ave Eastbound Approach",
+                "name": "Omassery Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1268,
-                #"rtsp_url": os.getenv("JCT01_ARM_EAST_RTSP", ""),
+                "rtsp_url": os.getenv("JCT01_ARM_EAST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_WEST": {
-                "name": "Oak Ave Westbound Approach",
+                "name": "Koduvally Town Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1288,
-                #"rtsp_url": os.getenv("JCT01_ARM_WEST_RTSP", ""),
+                "rtsp_url": os.getenv("JCT01_ARM_WEST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
         },
     },
     "JCT02": {
-        "name": "High Road / Park Lane",
+        "name": "Kunnamangalam",
         "type": "T",                          # T-junction
         "peak_periods": [(7, 9), (17, 19)],   # morning + evening peak
         "arms": {
             "ARM_NORTH": {
-                "name": "High Rd Northbound Approach",
+                "name": "Wayanad Approach",
                 "gps_lat": 51.5120,
                 "gps_lon": -0.1400,
-                #"rtsp_url": os.getenv("JCT02_ARM_NORTH_RTSP", ""),
+                "rtsp_url": os.getenv("JCT02_ARM_NORTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_SOUTH": {
-                "name": "High Rd Southbound Approach",
+                "name": "Kozhikode Approach",
                 "gps_lat": 51.5110,
                 "gps_lon": -0.1400,
-                #"rtsp_url": os.getenv("JCT02_ARM_SOUTH_RTSP", ""),
+                "rtsp_url": os.getenv("JCT02_ARM_SOUTH_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
             "ARM_EAST": {
-                "name": "Park Ln Eastbound Approach",
+                "name": "Pantheerpadam Approach",
                 "gps_lat": 51.5115,
                 "gps_lon": -0.1390,
-                #"rtsp_url": os.getenv("JCT02_ARM_EAST_RTSP", ""),
+                "rtsp_url": os.getenv("JCT02_ARM_EAST_RTSP", ""),
                 "counting_line_y": COUNTING_LINE_Y_FRACTION,
             },
         },

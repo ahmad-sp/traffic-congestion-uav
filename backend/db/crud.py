@@ -38,6 +38,8 @@ def save_minute_metrics(db: Session, metrics: dict):
         is_peak_hour=metrics["is_peak_hour"],
         hour_of_week=metrics["hour_of_week"],
         mean_speed_proxy=metrics.get("mean_speed_proxy", 0.0),
+        mean_bbox_growth_rate=metrics.get("mean_bbox_growth_rate", 0.0),
+        extreme_congestion_risk=metrics.get("extreme_congestion_risk"),
     )
     db.add(record)
     db.commit()
@@ -46,12 +48,11 @@ def save_minute_metrics(db: Session, metrics: dict):
 
 def get_metrics(db: Session, junction_id: str, arm_id: str, minutes: int = 60):
     camera_id = f"{junction_id}_{arm_id}"
-    since = datetime.utcnow() - timedelta(minutes=minutes)
     return (
         db.query(MinuteMetricRecord)
         .filter(MinuteMetricRecord.camera_id == camera_id)
-        .filter(MinuteMetricRecord.timestamp >= since)
         .order_by(MinuteMetricRecord.timestamp.desc())
+        .limit(minutes)
         .all()
     )
 
