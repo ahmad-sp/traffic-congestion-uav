@@ -693,7 +693,7 @@ Recent alerts. `limit` default 50, max 500. `level` optional filter.
   }
 ]
 ```
-
+ 
 ---
 
 ### `GET /alerts/{alert_id}`
