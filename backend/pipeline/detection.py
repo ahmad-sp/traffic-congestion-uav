@@ -51,6 +51,7 @@ class VehicleDetector:
         if self._model is None:
             from ultralytics import YOLO
             self._model = YOLO(self._model_name)
+            self._model.to(self.device)  # explicitly move model to configured device
             logger.info("Loaded %s on device=%s", self._model_name, self.device)
 
     def detect(self, frame: np.ndarray) -> list[Detection]:
@@ -91,7 +92,52 @@ class VehicleDetector:
                     bbox_area=area,
                 ))
 
+        # Secondary NMS pass for small vehicles (motorcycles, class_id=3).
+        # YOLO's built-in NMS uses a high IoU threshold (~0.7) which can miss
+        # overlapping motorcycle boxes (front wheel + body) that have low IoU.
+        detections = self._suppress_small_vehicle_duplicates(detections)
+
         return detections
+
+    @staticmethod
+    def _suppress_small_vehicle_duplicates(detections: list[Detection],
+                                           iou_thresh: float = 0.3) -> list[Detection]:
+        """
+        Extra NMS pass for bicycle/motorcycle detections (class_id 1, 3) with a
+        lower IoU threshold to merge double-detections that YOLO's built-in
+        NMS misses.
+        """
+        # Separate small two-wheeler detections from the rest
+        _SMALL_CLASSES = {1, 3}  # bicycle, motorcycle
+        motos = [d for d in detections if d.class_id in _SMALL_CLASSES]
+        others = [d for d in detections if d.class_id not in _SMALL_CLASSES]
+
+        if len(motos) <= 1:
+            return detections
+
+        # Sort by confidence descending — keep higher-confidence box
+        motos.sort(key=lambda d: d.confidence, reverse=True)
+        keep = []
+        suppressed = set()
+
+        for i, a in enumerate(motos):
+            if i in suppressed:
+                continue
+            keep.append(a)
+            for j in range(i + 1, len(motos)):
+                if j in suppressed:
+                    continue
+                # Compute IoU between a and motos[j]
+                xx1 = max(a.x1, motos[j].x1)
+                yy1 = max(a.y1, motos[j].y1)
+                xx2 = min(a.x2, motos[j].x2)
+                yy2 = min(a.y2, motos[j].y2)
+                inter = max(0, xx2 - xx1) * max(0, yy2 - yy1)
+                union = a.bbox_area + motos[j].bbox_area - inter
+                if union > 0 and inter / union >= iou_thresh:
+                    suppressed.add(j)
+
+        return others + keep
 
     def detections_to_array(self, detections: list[Detection]) -> np.ndarray:
         """Convert detections to numpy array for ByteTrack: (N, 5) = [x1, y1, x2, y2, score]."""

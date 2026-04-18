@@ -82,7 +82,11 @@ class MetricsAggregator:
         self._offline = recording_start_dt is not None
         self._peak_periods = peak_periods or config.PEAK_PERIODS
 
-        self.counting_line = CountingLine(frame_width, counting_line_x)
+        self.counting_line = CountingLine(
+            frame_width=frame_width,
+            frame_height=frame_height,
+            x_fraction=counting_line_x,
+        )
 
         # Accumulation buffers (reset each minute)
         self._frame_metrics: list[FrameMetrics] = []
@@ -99,8 +103,10 @@ class MetricsAggregator:
         far_y = self.frame_height * config.FAR_ZONE_Y_FRACTION
 
         fm = FrameMetrics(timestamp=timestamp)
+        self._last_video_ts = timestamp
 
         if not tracks:
+            self._frame_metrics.append(fm)
             return fm
 
         fm.vehicle_count = len(tracks)

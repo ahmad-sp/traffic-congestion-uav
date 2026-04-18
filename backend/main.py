@@ -305,11 +305,17 @@ def _draw_preview(frame, tracks, roi_contour, counting_line_x):
         cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
         cv2.polylines(display, [roi_contour], True, (0, 255, 0), 2)
 
-    # Counting line — yellow vertical
-    line_x = int(w * counting_line_x)
-    cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
-    cv2.putText(display, "COUNTING LINE", (line_x + 6, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    # Counting line — yellow
+    if config.COUNTING_LINE_ORIENTATION == "horizontal":
+        line_y = int(h * config.COUNTING_LINE_Y_FRACTION_LINE)
+        cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
+        cv2.putText(display, "COUNTING LINE", (10, line_y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    else:
+        line_x = int(w * counting_line_x)
+        cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+        cv2.putText(display, "COUNTING LINE", (line_x + 6, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Tracked vehicles — green bbox + track ID
     for t in tracks:

@@ -34,6 +34,7 @@ class TrackState:
     consecutive_stopped: int = 0
     is_stopped: bool = False
     class_id: int = -1
+    age: int = 0  # number of frames this track has been alive
 
 
 class VehicleTracker:
@@ -42,9 +43,12 @@ class VehicleTracker:
     motion metrics relevant to congestion detection.
     """
 
-    def __init__(self):
+    def __init__(self, frame_rate: float | None = None):
         self._tracker = None
         self._track_states: dict[int, TrackState] = {}
+        # Allow caller to override frame_rate (important when processing
+        # video at native fps instead of the live-pipeline FRAME_RATE).
+        self._frame_rate = frame_rate if frame_rate is not None else config.TRACK_FRAME_RATE
 
     def _init_tracker(self):
         """Lazy-init ByteTrack."""
@@ -58,9 +62,9 @@ class VehicleTracker:
                 track_low_thresh=config.TRACK_LOW_THRESH,
                 match_thresh=config.TRACK_MATCH_THRESH,
                 track_buffer=config.TRACK_BUFFER,
-                frame_rate=config.TRACK_FRAME_RATE,
+                frame_rate=self._frame_rate,
             )
-            logger.info("Initialized BYTETracker from boxmot")
+            logger.info("Initialized BYTETracker from boxmot (frame_rate=%s)", self._frame_rate)
         except ImportError:
             logger.warning("boxmot not available, trying byte_tracker standalone")
             self._tracker = self._create_fallback_tracker()
@@ -107,6 +111,7 @@ class VehicleTracker:
 
             if track_id in self._track_states:
                 state = self._track_states[track_id]
+                state.age += 1
                 state.bbox_area_delta = area - state.bbox_area
                 state.prev_centroid_x = state.centroid_x
                 state.prev_centroid_y = state.centroid_y
@@ -120,7 +125,7 @@ class VehicleTracker:
                     state.consecutive_stopped = 0
                 state.is_stopped = state.consecutive_stopped >= config.STOP_CONSECUTIVE_FRAMES
             else:
-                state = TrackState(track_id=track_id)
+                state = TrackState(track_id=track_id, age=0)
 
             state.bbox = (x1, y1, x2, y2)
             state.bbox_area = area

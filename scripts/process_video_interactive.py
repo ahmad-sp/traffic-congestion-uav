@@ -207,11 +207,17 @@ def _draw_full_preview(frame: np.ndarray, all_dets, roi_dets,
         cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
         cv2.polylines(display, [contour], True, (0, 255, 0), 2)
 
-    # Vertical counting line (yellow)
-    line_x = int(w * config.COUNTING_LINE_X_FRACTION)
-    cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
-    cv2.putText(display, "COUNT", (line_x + 6, 20),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    # Counting line (yellow) — orientation depends on config
+    if config.COUNTING_LINE_ORIENTATION == "horizontal":
+        line_y = int(h * config.COUNTING_LINE_Y_FRACTION_LINE)
+        cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
+        cv2.putText(display, "COUNT", (10, line_y - 8),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    else:
+        line_x = int(w * config.COUNTING_LINE_X_FRACTION)
+        cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+        cv2.putText(display, "COUNT", (line_x + 6, 20),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Detection bboxes — red if outside ROI, green if inside
     roi_set = {id(d) for d in roi_dets}
@@ -353,7 +359,7 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
     detector = VehicleDetector()
 
     print("[INIT] Loading VehicleTracker (ByteTrack)...")
-    tracker = VehicleTracker()
+    tracker = VehicleTracker(frame_rate=fps)
 
     print("[INIT] Initializing MetricsAggregator...")
     aggregator = MetricsAggregator(

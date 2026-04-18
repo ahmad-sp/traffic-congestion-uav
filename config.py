@@ -41,9 +41,9 @@ ROI_MASKS_PATH = DATA_DIR / "roi_masks.json"
 # YOLO DETECTION
 # ─────────────────────────────────────────────
 YOLO_MODEL_NAME = "yolov8n.pt"
-YOLO_CONFIDENCE_THRESHOLD = float(os.getenv("YOLO_CONF", "0.45"))
-# COCO class IDs to keep: car=2, motorcycle=3, bus=5, truck=7
-YOLO_TARGET_CLASSES = [2, 3, 5, 7]
+YOLO_CONFIDENCE_THRESHOLD = float(os.getenv("YOLO_CONF", "0.25"))
+# COCO class IDs to keep: bicycle=1, car=2, motorcycle=3, bus=5, truck=7
+YOLO_TARGET_CLASSES = [1, 2, 3, 5, 7]
 YOLO_DEVICE = os.getenv("YOLO_DEVICE", "cpu")  # "cpu", "cuda:0", etc.
 
 # ─────────────────────────────────────────────
@@ -51,9 +51,13 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE", "cpu")  # "cpu", "cuda:0", etc.
 # ─────────────────────────────────────────────
 TRACK_HIGH_THRESH = 0.5        # detection confidence for first association
 TRACK_LOW_THRESH = 0.1         # detection confidence for second association
-TRACK_MATCH_THRESH = 0.8       # IoU threshold
+TRACK_MATCH_THRESH = 0.7       # IoU threshold (lowered from 0.8 to reduce ID switches)
 TRACK_BUFFER = 30              # frames to keep lost tracks (= 6 seconds at 5 FPS)
 TRACK_FRAME_RATE = FRAME_RATE
+
+# Counting deduplication
+MIN_TRACK_AGE_FRAMES = 3       # track must exist this many frames before it can be counted
+CROSSING_DEDUP_PIXELS = 50.0   # suppress crossing if another track crossed within this distance recently
 
 # ─────────────────────────────────────────────
 # MOTION & QUEUE ANALYSIS
@@ -67,8 +71,12 @@ NEAR_ZONE_Y_FRACTION = 0.6    # centroid_y > this = near zone (close to camera)
 FAR_ZONE_Y_FRACTION = 0.4     # centroid_y < this = far zone (far from camera)
 FAR_ZONE_UPPER_Y_RATIO = 0.4  # upper boundary for far-zone bbox growth rate calculation
 
-# Counting line — vertical line at a fraction of frame width (side-mounted CCTV)
+# Counting line — orientation depends on traffic flow direction.
+# "horizontal" = line across the frame at a Y-fraction (vehicles move top↔bottom)
+# "vertical"   = line down the frame at an X-fraction (vehicles move left↔right)
+COUNTING_LINE_ORIENTATION = os.getenv("COUNTING_LINE_ORIENTATION", "horizontal")
 COUNTING_LINE_X_FRACTION = float(os.getenv("COUNTING_LINE_X", "0.5"))
+COUNTING_LINE_Y_FRACTION_LINE = float(os.getenv("COUNTING_LINE_Y", "0.70"))
 
 # Queue depth: near-zone stopped count sustained over this many seconds
 QUEUE_DEPTH_SUSTAIN_SECONDS = 30
