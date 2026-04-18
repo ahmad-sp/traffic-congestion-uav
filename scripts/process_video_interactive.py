@@ -73,12 +73,30 @@ def _draw_polygon_overlay(frame: np.ndarray, points: list[tuple[int, int]]) -> N
         cv2.line(frame, points[-1], points[0], (0, 255, 0), 1)
 
 
-def _fit_frame_to_screen(frame: np.ndarray, max_w: int = 1280, max_h: int = 720) -> tuple[np.ndarray, float]:
+def _get_screen_size() -> tuple[int, int]:
+    """Return (screen_width, screen_height) using tkinter, with a safe fallback."""
+    try:
+        import tkinter as tk
+        root = tk.Tk()
+        root.withdraw()
+        sw, sh = root.winfo_screenwidth(), root.winfo_screenheight()
+        root.destroy()
+        return sw, sh
+    except Exception:
+        return 1280, 720
+
+
+def _fit_frame_to_screen(frame: np.ndarray) -> tuple[np.ndarray, float]:
     """
-    Downscale frame so it fits within max_w x max_h while preserving aspect ratio.
+    Downscale frame so it fits within the usable screen area (leaving room for
+    the OS taskbar) while preserving aspect ratio — never crops.
     Returns (display_frame, scale) where scale = display_px / original_px.
     If the frame already fits, scale == 1.0 and the original array is returned.
     """
+    screen_w, screen_h = _get_screen_size()
+    # Leave ~80 px headroom for the OS taskbar / window title bar
+    max_w = screen_w - 20
+    max_h = screen_h - 80
     h, w = frame.shape[:2]
     scale = min(max_w / w, max_h / h, 1.0)
     if scale == 1.0:
