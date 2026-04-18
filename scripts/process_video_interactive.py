@@ -42,17 +42,23 @@ from backend.pipeline.roi import save_roi
 # ROI selection
 # ---------------------------------------------------------------------------
 
-_polygon_points: list[tuple[int, int]] = []
-_roi_frame: np.ndarray | None = None
+_polygon_points: list[tuple[int, int]] = []  # stored in ORIGINAL frame coordinates
+_roi_frame: np.ndarray | None = None         # display-scaled frame
+_roi_scale: float = 1.0                      # display_px * _roi_scale = original_px
 
 
 def _mouse_callback(event, x, y, flags, param):
-    global _polygon_points, _roi_frame
+    global _polygon_points, _roi_frame, _roi_scale
     if event == cv2.EVENT_LBUTTONDOWN:
-        _polygon_points.append((x, y))
-        # Redraw overlay on a fresh copy each click
+        # Convert display coordinates → original frame coordinates
+        orig_x = int(round(x / _roi_scale))
+        orig_y = int(round(y / _roi_scale))
+        _polygon_points.append((orig_x, orig_y))
+        # Redraw overlay on a fresh copy each click (in display space)
         display = _roi_frame.copy()
-        _draw_polygon_overlay(display, _polygon_points)
+        display_points = [(int(round(px * _roi_scale)), int(round(py * _roi_scale)))
+                          for px, py in _polygon_points]
+        _draw_polygon_overlay(display, display_points)
         cv2.imshow("ROI Selection", display)
 
 
@@ -67,24 +73,46 @@ def _draw_polygon_overlay(frame: np.ndarray, points: list[tuple[int, int]]) -> N
         cv2.line(frame, points[-1], points[0], (0, 255, 0), 1)
 
 
+def _fit_frame_to_screen(frame: np.ndarray, max_w: int = 1280, max_h: int = 720) -> tuple[np.ndarray, float]:
+    """
+    Downscale frame so it fits within max_w x max_h while preserving aspect ratio.
+    Returns (display_frame, scale) where scale = display_px / original_px.
+    If the frame already fits, scale == 1.0 and the original array is returned.
+    """
+    h, w = frame.shape[:2]
+    scale = min(max_w / w, max_h / h, 1.0)
+    if scale == 1.0:
+        return frame, 1.0
+    new_w, new_h = int(w * scale), int(h * scale)
+    return cv2.resize(frame, (new_w, new_h), interpolation=cv2.INTER_AREA), scale
+
+
 def select_roi(first_frame: np.ndarray) -> np.ndarray:
     """
     Display first_frame and let the user click polygon vertices.
     Press ENTER to confirm, BACKSPACE to undo last point, 'r' to reset.
-    Returns a (N, 1, 2) int32 contour array suitable for cv2.pointPolygonTest.
+    Returns a (N, 1, 2) int32 contour array in ORIGINAL frame coordinates,
+    suitable for cv2.pointPolygonTest against un-scaled detection results.
     """
-    global _polygon_points, _roi_frame
+    global _polygon_points, _roi_frame, _roi_scale
     _polygon_points = []
-    _roi_frame = first_frame.copy()
+    _roi_frame, _roi_scale = _fit_frame_to_screen(first_frame)
 
-    cv2.namedWindow("ROI Selection")
+    orig_h, orig_w = first_frame.shape[:2]
+    disp_h, disp_w = _roi_frame.shape[:2]
+    if _roi_scale < 1.0:
+        print(f"\n[ROI] Frame scaled from {orig_w}x{orig_h} → {disp_w}x{disp_h} "
+              f"(scale={_roi_scale:.3f}) to fit screen.")
+        print("      Click coordinates are automatically mapped back to original resolution.")
+
+    cv2.namedWindow("ROI Selection", cv2.WINDOW_AUTOSIZE)
     cv2.setMouseCallback("ROI Selection", _mouse_callback)
 
     print("\n[ROI] Click to add polygon vertices.")
     print("      BACKSPACE = undo last point | r = reset | ENTER = confirm\n")
 
     display = _roi_frame.copy()
-    _draw_polygon_overlay(display, _polygon_points)
+    _draw_polygon_overlay(display, [])
     cv2.imshow("ROI Selection", display)
 
     while True:
@@ -100,7 +128,9 @@ def select_roi(first_frame: np.ndarray) -> np.ndarray:
             if _polygon_points:
                 _polygon_points.pop()
                 display = _roi_frame.copy()
-                _draw_polygon_overlay(display, _polygon_points)
+                display_points = [(int(round(px * _roi_scale)), int(round(py * _roi_scale)))
+                                  for px, py in _polygon_points]
+                _draw_polygon_overlay(display, display_points)
                 cv2.imshow("ROI Selection", display)
 
         elif key == ord("r"):
@@ -115,7 +145,7 @@ def select_roi(first_frame: np.ndarray) -> np.ndarray:
             sys.exit(0)
 
     cv2.destroyAllWindows()
-    print(f"[ROI] Polygon confirmed with {len(_polygon_points)} points.")
+    print(f"[ROI] Polygon confirmed with {len(_polygon_points)} points (original-resolution coords).")
     contour = np.array(_polygon_points, dtype=np.int32).reshape((-1, 1, 2))
     return contour
 
