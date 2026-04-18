@@ -1,9 +1,9 @@
 """
-Virtual counting line — detects vehicles crossing a horizontal line.
+Virtual counting line — detects vehicles crossing a vertical line.
 
-The line is placed at a configurable Y-fraction of the frame.
-A vehicle is counted when its centroid crosses the line moving downward
-(toward the camera = normal flow direction).
+The line is placed at a configurable X-fraction of the frame.
+A vehicle is counted when its centroid crosses the line (either direction),
+which suits side-mounted CCTV cameras watching traffic pass laterally.
 """
 
 import logging
@@ -19,18 +19,18 @@ logger = logging.getLogger(__name__)
 
 class CountingLine:
     """
-    Detects downward crossings of a horizontal counting line.
+    Detects crossings of a vertical counting line.
 
-    In our camera geometry (facing oncoming traffic), vehicles move
-    from the top of the frame (far) toward the bottom (near/camera).
-    A crossing = centroid_y goes from above the line to below it.
+    For side-mounted CCTV cameras, vehicles move horizontally across the
+    frame.  A crossing is registered when a track's centroid_x transitions
+    from one side of line_x to the other (either direction).
     """
 
-    def __init__(self, frame_height: int, y_fraction: float = config.COUNTING_LINE_Y_FRACTION):
-        self.line_y = frame_height * y_fraction
-        self.frame_height = frame_height
+    def __init__(self, frame_width: int, x_fraction: float = config.COUNTING_LINE_X_FRACTION):
+        self.line_x = frame_width * x_fraction
+        self.frame_width = frame_width
         self._crossed_ids: set[int] = set()  # track IDs that already crossed
-        self._prev_y: dict[int, float] = {}  # track_id → previous centroid_y
+        self._prev_x: dict[int, float] = {}  # track_id → previous centroid_x
 
     def update(self, tracks: list[TrackState]) -> list[int]:
         """
@@ -39,23 +39,27 @@ class CountingLine:
         Args:
             tracks: current active TrackState objects
         Returns:
-            List of track_ids that crossed downward this frame.
+            List of track_ids that crossed the line this frame.
         """
         crossed_this_frame = []
 
         for t in tracks:
-            prev_y = self._prev_y.get(t.track_id)
-            self._prev_y[t.track_id] = t.centroid_y
+            prev_x = self._prev_x.get(t.track_id)
+            self._prev_x[t.track_id] = t.centroid_x
 
-            if prev_y is None:
+            if prev_x is None:
                 continue
 
             # Already counted — don't double-count
             if t.track_id in self._crossed_ids:
                 continue
 
-            # Downward crossing: prev_y < line_y AND current_y >= line_y
-            if prev_y < self.line_y <= t.centroid_y:
+            # Left-to-right crossing
+            left_to_right = prev_x < self.line_x <= t.centroid_x
+            # Right-to-left crossing
+            right_to_left = prev_x >= self.line_x > t.centroid_x
+
+            if left_to_right or right_to_left:
                 self._crossed_ids.add(t.track_id)
                 crossed_this_frame.append(t.track_id)
 
@@ -73,6 +77,6 @@ class CountingLine:
 
     def cleanup_stale(self, active_track_ids: set[int]):
         """Remove tracking data for tracks no longer active."""
-        stale = set(self._prev_y.keys()) - active_track_ids
+        stale = set(self._prev_x.keys()) - active_track_ids
         for tid in stale:
-            self._prev_y.pop(tid, None)
+            self._prev_x.pop(tid, None)

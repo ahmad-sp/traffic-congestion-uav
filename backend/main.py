@@ -287,7 +287,7 @@ def _run_demo_simulation():
     logger.info("Demo simulation complete — all cameras processed")
 
 
-def _draw_preview(frame, tracks, roi_contour, counting_line_y):
+def _draw_preview(frame, tracks, roi_contour, counting_line_x):
     """Annotate a frame with ROI polygon, counting line, and tracked vehicles.
 
     All OpenCV drawing happens on a copy so the original frame is untouched.
@@ -305,10 +305,10 @@ def _draw_preview(frame, tracks, roi_contour, counting_line_y):
         cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
         cv2.polylines(display, [roi_contour], True, (0, 255, 0), 2)
 
-    # Counting line — yellow horizontal
-    line_y = int(h * counting_line_y)
-    cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
-    cv2.putText(display, "COUNTING LINE", (10, line_y - 8),
+    # Counting line — yellow vertical
+    line_x = int(w * counting_line_x)
+    cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+    cv2.putText(display, "COUNTING LINE", (line_x + 6, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Tracked vehicles — green bbox + track ID
@@ -361,7 +361,7 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
     else:
         logger.warning("No ROI configured for %s — processing full frame", camera_id)
 
-    counting_line_y = config.COUNTING_LINE_Y_FRACTION
+    counting_line_x = config.COUNTING_LINE_X_FRACTION
     peak_periods = config.JUNCTIONS.get(junction_id, {}).get("peak_periods", config.PEAK_PERIODS)
 
     while True:
@@ -393,7 +393,7 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
 
         # --- Live preview (all OpenCV calls inside this thread) ---
         if show_preview:
-            display = _draw_preview(frame, tracks, roi_contour, counting_line_y)
+            display = _draw_preview(frame, tracks, roi_contour, counting_line_x)
             cv2.imshow(camera_id, display)
             cv2.waitKey(1)
 

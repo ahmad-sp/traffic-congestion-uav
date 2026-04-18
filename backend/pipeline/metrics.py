@@ -68,7 +68,7 @@ class MetricsAggregator:
     """
 
     def __init__(self, junction_id: str, arm_id: str, frame_height: int, frame_width: int,
-                 counting_line_y: float = config.COUNTING_LINE_Y_FRACTION,
+                 counting_line_x: float = config.COUNTING_LINE_X_FRACTION,
                  recording_start_dt=None,   # datetime (timezone-aware) — offline mode
                  peak_periods=None):        # list[(int,int)] — per-junction override
         self.junction_id = junction_id
@@ -82,7 +82,7 @@ class MetricsAggregator:
         self._offline = recording_start_dt is not None
         self._peak_periods = peak_periods or config.PEAK_PERIODS
 
-        self.counting_line = CountingLine(frame_height, counting_line_y)
+        self.counting_line = CountingLine(frame_width, counting_line_x)
 
         # Accumulation buffers (reset each minute)
         self._frame_metrics: list[FrameMetrics] = []

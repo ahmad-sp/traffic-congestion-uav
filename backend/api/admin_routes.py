@@ -222,7 +222,7 @@ def create_junction(req: NewJunctionRequest):
                 "gps_lat": first_arm.gps_lat,
                 "gps_lon": first_arm.gps_lon,
                 "rtsp_url": first_arm.rtsp_url,
-                "counting_line_y": config.COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": config.COUNTING_LINE_X_FRACTION,
                 "road_path": [],
             }
         },
@@ -290,7 +290,7 @@ def add_arm(junction_id: str, req: NewArmRequest):
         "gps_lat": req.gps_lat,
         "gps_lon": req.gps_lon,
         "rtsp_url": req.rtsp_url,
-        "counting_line_y": config.COUNTING_LINE_Y_FRACTION,
+        "counting_line_x": config.COUNTING_LINE_X_FRACTION,
         "road_path": [],
     }
 

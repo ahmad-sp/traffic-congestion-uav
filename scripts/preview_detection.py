@@ -137,7 +137,7 @@ def draw_roi_interactive(first_frame):
 COCO_NAMES = {2: "car", 3: "motorcycle", 5: "bus", 7: "truck"}
 
 
-def draw_detections(frame, all_dets, roi_dets, tracks, roi_contour, counting_line_y, hud):
+def draw_detections(frame, all_dets, roi_dets, tracks, roi_contour, counting_line_x, hud):
     """Draw bboxes, ROI, counting line, and HUD onto frame in-place."""
     h, w = frame.shape[:2]
 
@@ -148,10 +148,10 @@ def draw_detections(frame, all_dets, roi_dets, tracks, roi_contour, counting_lin
         cv2.addWeighted(overlay, 0.15, frame, 0.85, 0, frame)
         cv2.polylines(frame, [roi_contour], True, (0, 255, 0), 2)
 
-    # Counting line (yellow)
-    line_y = int(counting_line_y)
-    cv2.line(frame, (0, line_y), (w, line_y), (0, 255, 255), 2)
-    cv2.putText(frame, "COUNTING LINE", (10, line_y - 8),
+    # Counting line (yellow vertical)
+    line_x = int(counting_line_x)
+    cv2.line(frame, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+    cv2.putText(frame, "COUNTING LINE", (line_x + 6, 20),
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
 
     # Bounding boxes — red for out-of-ROI, green for in-ROI
@@ -280,7 +280,7 @@ def run_preview(video_path, roi_contour, junction_id, arm_id,
         peak_periods=peak_periods,
     )
 
-    counting_line_y = frame_h * config.COUNTING_LINE_Y_FRACTION
+    counting_line_x = frame_w * config.COUNTING_LINE_X_FRACTION
 
     print("[INIT] Loading ML inference runner...")
     inference_runner = InferenceRunner(device=config.YOLO_DEVICE)
@@ -449,7 +449,7 @@ def run_preview(video_path, roi_contour, junction_id, arm_id,
                         "alert": alert_level,
                     }
                     draw_detections(display, all_detections, roi_detections,
-                                    tracks, roi_contour, counting_line_y, hud)
+                                    tracks, roi_contour, counting_line_x, hud)
                     cv2.imshow("Preview", display)
                     last_display = display
 

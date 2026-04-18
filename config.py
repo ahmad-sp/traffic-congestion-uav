@@ -67,8 +67,8 @@ NEAR_ZONE_Y_FRACTION = 0.6    # centroid_y > this = near zone (close to camera)
 FAR_ZONE_Y_FRACTION = 0.4     # centroid_y < this = far zone (far from camera)
 FAR_ZONE_UPPER_Y_RATIO = 0.4  # upper boundary for far-zone bbox growth rate calculation
 
-# Counting line (fraction of frame height)
-COUNTING_LINE_Y_FRACTION = float(os.getenv("COUNTING_LINE_Y", "0.5"))
+# Counting line — vertical line at a fraction of frame width (side-mounted CCTV)
+COUNTING_LINE_X_FRACTION = float(os.getenv("COUNTING_LINE_X", "0.5"))
 
 # Queue depth: near-zone stopped count sustained over this many seconds
 QUEUE_DEPTH_SUSTAIN_SECONDS = 30
@@ -215,28 +215,28 @@ JUNCTIONS = {
                 "gps_lat": 11.359201,
                 "gps_lon": 75.911547,
                 "rtsp_url": os.getenv("JCT01_ARM_NORTH_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
             "ARM_SOUTH": {
                 "name": "NH-766 Kozhikode Approach",
                 "gps_lat": 51.5064,
                 "gps_lon": -0.1278,
                 "rtsp_url": os.getenv("JCT01_ARM_SOUTH_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
             "ARM_EAST": {
                 "name": "Omassery Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1268,
                 "rtsp_url": os.getenv("JCT01_ARM_EAST_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
             "ARM_WEST": {
                 "name": "Koduvally Town Approach",
                 "gps_lat": 51.5069,
                 "gps_lon": -0.1288,
                 "rtsp_url": os.getenv("JCT01_ARM_WEST_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
         },
     },
@@ -250,21 +250,21 @@ JUNCTIONS = {
                 "gps_lat": 51.5120,
                 "gps_lon": -0.1400,
                 "rtsp_url": os.getenv("JCT02_ARM_NORTH_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
             "ARM_SOUTH": {
                 "name": "Kozhikode Approach",
                 "gps_lat": 51.5110,
                 "gps_lon": -0.1400,
                 "rtsp_url": os.getenv("JCT02_ARM_SOUTH_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
             "ARM_EAST": {
                 "name": "Pantheerpadam Approach",
                 "gps_lat": 51.5115,
                 "gps_lon": -0.1390,
                 "rtsp_url": os.getenv("JCT02_ARM_EAST_RTSP", ""),
-                "counting_line_y": COUNTING_LINE_Y_FRACTION,
+                "counting_line_x": COUNTING_LINE_X_FRACTION,
             },
         },
     },
