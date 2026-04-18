@@ -169,6 +169,92 @@ def select_roi(first_frame: np.ndarray) -> np.ndarray:
 
 
 # ---------------------------------------------------------------------------
+# Live preview helpers
+# ---------------------------------------------------------------------------
+
+_PREVIEW_WINDOW = "Live Preview  |  'v': toggle view  |  'q': close"
+
+
+def _draw_stats_bar(stats: dict) -> np.ndarray:
+    """Render a compact status-bar image (no video frame needed)."""
+    bar = np.zeros((160, 520, 3), dtype=np.uint8)
+    lines = [
+        f"Frame: {stats['frame']}/{stats['total']} ({stats['pct']:.1f}%)",
+        f"Minute: {stats['minute']}",
+        f"Vehicles in frame: {stats['vehicles']}   Stopped: {stats['stopped']}",
+        f"VPM (last min): {stats['vpm']}   |  Crossings this min: {stats['crossing_count']}",
+        f"Occupancy: {stats['occupancy']:.1f}%",
+        f"Queue depth: {stats['queue_depth']}",
+        "",
+        "Press 'v' for live video  |  'q' to close",
+    ]
+    for i, line in enumerate(lines):
+        cv2.putText(bar, line, (10, 18 + i * 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (200, 200, 200), 1)
+    return bar
+
+
+def _draw_full_preview(frame: np.ndarray, all_dets, roi_dets,
+                       tracks, contour: np.ndarray, stats: dict) -> np.ndarray:
+    """Annotate frame with ROI, counting line, detections, tracks, and HUD."""
+    display = frame.copy()
+    h, w = display.shape[:2]
+
+    # ROI polygon (translucent green)
+    if contour is not None:
+        overlay = display.copy()
+        cv2.fillPoly(overlay, [contour], (0, 120, 0))
+        cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
+        cv2.polylines(display, [contour], True, (0, 255, 0), 2)
+
+    # Vertical counting line (yellow)
+    line_x = int(w * config.COUNTING_LINE_X_FRACTION)
+    cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+    cv2.putText(display, "COUNT", (line_x + 6, 20),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+    # Detection bboxes — red if outside ROI, green if inside
+    roi_set = {id(d) for d in roi_dets}
+    for d in all_dets:
+        in_roi = id(d) in roi_set
+        color = (0, 255, 0) if in_roi else (0, 0, 200)
+        x1, y1, x2, y2 = int(d.x1), int(d.y1), int(d.x2), int(d.y2)
+        cv2.rectangle(display, (x1, y1), (x2, y2), color, 2)
+
+    # Track ID labels
+    for t in tracks:
+        bx1, by1 = int(t.bbox[0]), int(t.bbox[1])
+        label = f"ID:{t.track_id}"
+        if t.is_stopped:
+            label += " [S]"
+        cv2.putText(display, label, (bx1, by1 - 6),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+
+    # HUD overlay (semi-transparent black box, top-right)
+    hud_lines = [
+        f"Frame: {stats['frame']}/{stats['total']} ({stats['pct']:.1f}%)",
+        f"Vehicles: {stats['vehicles']}  Stopped: {stats['stopped']}",
+        f"VPM: {stats['vpm']}  Crossings: {stats['crossing_count']}",
+        f"Occupancy: {stats['occupancy']:.1f}%  Queue: {stats['queue_depth']}",
+    ]
+    hud_h = 16 + len(hud_lines) * 22
+    hud_w = 340
+    hud_x = w - hud_w - 10
+    overlay = display.copy()
+    cv2.rectangle(overlay, (hud_x, 4), (hud_x + hud_w, 4 + hud_h), (0, 0, 0), -1)
+    cv2.addWeighted(overlay, 0.55, display, 0.45, 0, display)
+    for i, line in enumerate(hud_lines):
+        cv2.putText(display, line, (hud_x + 8, 24 + i * 22),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (255, 255, 255), 1)
+
+    # Bottom hint
+    cv2.putText(display, "'v': stats only  |  'q': close", (10, h - 12),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.45, (180, 180, 180), 1)
+
+    return display
+
+
+# ---------------------------------------------------------------------------
 # Bottom-edge ROI filter
 # ---------------------------------------------------------------------------
 
@@ -282,7 +368,15 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
     minute_metrics_list = []
     frame_idx = 0
 
-    print("\n[PROCESSING] Starting frame loop. Press Ctrl+C to stop early.\n")
+    # --- Live preview state ---
+    # Starts with a stats window; press 'v' for full video, 'q' to close.
+    preview_mode = "stats"   # "stats" | "full" | "off"
+    last_vpm = 0
+    last_queue_depth = 0
+    cv2.namedWindow(_PREVIEW_WINDOW, cv2.WINDOW_AUTOSIZE)
+
+    print("\n[PROCESSING] Starting frame loop. Press Ctrl+C to stop early.")
+    print("[PREVIEW] Stats window open — press 'v' for live video, 'q' to close.\n")
 
     try:
         while True:
@@ -303,13 +397,15 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
             tracks = tracker.update(det_array, frame)
 
             # 4. Compute per-frame metrics
-            aggregator.compute_frame_metrics(tracks, timestamp)
+            fm = aggregator.compute_frame_metrics(tracks, timestamp)
 
             # 5. Check for minute boundary
             if aggregator.should_aggregate():
                 result = aggregator.aggregate_minute()
                 if result is not None:
                     minute_metrics_list.append(result)
+                    last_vpm = result.VPM
+                    last_queue_depth = result.queue_depth
                     elapsed_min = len(minute_metrics_list)
                     print(f"  [MINUTE {elapsed_min:>3}] VPM={result.VPM}  "
                           f"queue_depth={result.queue_depth}  "
@@ -324,11 +420,53 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
                 pct = frame_idx / total_frames * 100 if total_frames else 0
                 print(f"  [PROGRESS] Frame {frame_idx}/{total_frames} ({pct:.1f}%)")
 
+            # ------ Live preview ------
+            if preview_mode != "off":
+                stats = {
+                    "frame": frame_idx,
+                    "total": total_frames,
+                    "pct": frame_idx / total_frames * 100 if total_frames else 0,
+                    "vehicles": fm.vehicle_count,
+                    "stopped": fm.stopped_count,
+                    "vpm": last_vpm,
+                    "crossing_count": aggregator.counting_line.get_count(),
+                    "occupancy": fm.occupancy_ratio,
+                    "queue_depth": last_queue_depth,
+                    "minute": len(minute_metrics_list),
+                }
+
+                # Decide how often to refresh the display
+                show_this_frame = (
+                    (preview_mode == "full" and frame_idx % 2 == 0) or
+                    (preview_mode == "stats" and frame_idx % 15 == 0)
+                )
+
+                if show_this_frame:
+                    if preview_mode == "full":
+                        display = _draw_full_preview(
+                            frame, detections, roi_detections,
+                            tracks, contour, stats)
+                        display, _ = _fit_frame_to_screen(display)
+                    else:
+                        display = _draw_stats_bar(stats)
+                    cv2.imshow(_PREVIEW_WINDOW, display)
+
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("v"):
+                    preview_mode = "full" if preview_mode == "stats" else "stats"
+                    tag = "Full video" if preview_mode == "full" else "Stats only"
+                    print(f"  [PREVIEW] {tag}")
+                elif key in (ord("q"), 27):  # q or ESC
+                    preview_mode = "off"
+                    cv2.destroyAllWindows()
+                    print("  [PREVIEW] Closed — processing continues headless.")
+
     except KeyboardInterrupt:
         print("\n[INFO] Processing interrupted by user.")
 
     finally:
         cap.release()
+        cv2.destroyAllWindows()
 
     # ---------------------------------------------------------------------------
     # Export
