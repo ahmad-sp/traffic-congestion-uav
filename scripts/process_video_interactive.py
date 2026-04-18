@@ -384,11 +384,21 @@ def process_video(video_path: Path, contour: np.ndarray, output_dir: Path,
     print("\n[PROCESSING] Starting frame loop. Press Ctrl+C to stop early.")
     print("[PREVIEW] Stats window open — press 'v' for live video, 'q' to close.\n")
 
+    max_read_failures = 0       # consecutive read failures
+    MAX_SEEK_RETRIES = 100      # how many frames to skip before giving up
+
     try:
         while True:
             ret, frame = cap.read()
             if not ret:
+                # Try seeking forward to recover from decode failures
+                if max_read_failures < MAX_SEEK_RETRIES and frame_idx < total_frames - 1:
+                    max_read_failures += 1
+                    frame_idx += 1
+                    cap.set(cv2.CAP_PROP_POS_FRAMES, frame_idx)
+                    continue
                 break
+            max_read_failures = 0  # reset on successful read
 
             timestamp = frame_idx / fps  # seconds from video start
 
