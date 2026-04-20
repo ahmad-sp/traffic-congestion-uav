@@ -26,7 +26,7 @@ logger = logging.getLogger(__name__)
 # Spatial dedup window: only suppress crossings that happened within this many
 # frames of each other.  Beyond this window, two vehicles at the same position
 # are treated as distinct (they crossed at different times).
-_DEDUP_FRAME_WINDOW = 10  # frames — at 25fps ≈ 0.4s, at 5fps ≈ 2s
+_DEDUP_FRAME_WINDOW = 5   # frames — at 5fps ≈ 1s; enough to catch ID-switch doubles
 
 
 class CountingLine:
@@ -54,8 +54,10 @@ class CountingLine:
         else:
             self.line_pos = frame_width * x_fraction
 
-        self._crossed_ids: set[int] = set()      # track IDs that already crossed
-        self._prev_pos: dict[int, float] = {}     # track_id → previous position on crossing axis
+        self._crossed_ids: set[int] = set()         # per-minute: cleared on reset_count()
+        self._display_crossed_ids: set[int] = set() # lifetime: cleared only when track goes stale
+        self._prev_pos: dict[int, float] = {}        # track_id → previous position on crossing axis
+        self._first_pos: dict[int, float] = {}       # track_id → position at first appearance
         # Recent crossing positions for spatial dedup: list of (cross_coord, frame_number)
         # cross_coord is the coordinate on the OTHER axis (X for horizontal line, Y for vertical)
         self._recent_crossings: list[tuple[float, int]] = []
@@ -90,6 +92,8 @@ class CountingLine:
             self._prev_pos[t.track_id] = pos
 
             if prev_pos is None:
+                # First appearance — record starting position for fallback detection
+                self._first_pos[t.track_id] = pos
                 continue
 
             # Already counted — don't double-count
@@ -100,11 +104,23 @@ class CountingLine:
             if t.age < config.MIN_TRACK_AGE_FRAMES:
                 continue
 
-            # Crossing in either direction
+            # Primary crossing check: frame-to-frame transition through the line
             forward = prev_pos < self.line_pos <= pos
             backward = prev_pos >= self.line_pos > pos
+            crossed = forward or backward
 
-            if forward or backward:
+            # Fallback: vehicle appeared on one side and is now confirmed on the other
+            # side, but the standard check missed it because the crossing happened
+            # during the MIN_TRACK_AGE_FRAMES blind window (ByteTrack confirmation delay).
+            if not crossed:
+                first_p = self._first_pos.get(t.track_id)
+                if first_p is not None:
+                    crossed = (
+                        (first_p < self.line_pos <= pos) or   # started above, now below
+                        (first_p >= self.line_pos > pos)       # started below, now above
+                    )
+
+            if crossed:
                 dedup_coord = self._get_dedup_axis(t)
 
                 # Spatial dedup: suppress if another track crossed nearby very recently
@@ -114,9 +130,11 @@ class CountingLine:
                         t.track_id, t.centroid_x, t.centroid_y,
                     )
                     self._crossed_ids.add(t.track_id)
+                    self._display_crossed_ids.add(t.track_id)
                     continue
 
                 self._crossed_ids.add(t.track_id)
+                self._display_crossed_ids.add(t.track_id)
                 self._recent_crossings.append((dedup_coord, self._frame_number))
                 self._crossing_count += 1
                 crossed_this_frame.append(t.track_id)
@@ -139,7 +157,12 @@ class CountingLine:
         return self._crossing_count
 
     def reset_count(self) -> int:
-        """Reset counter and return the count before reset."""
+        """Reset per-minute counter and return the count before reset.
+
+        _crossed_ids is cleared so each vehicle can be counted once per minute.
+        _display_crossed_ids is intentionally NOT cleared — vehicles that crossed
+        in the previous minute stay green in the preview until they leave the frame.
+        """
         count = self._crossing_count
         self._crossed_ids.clear()
         self._recent_crossings.clear()
@@ -151,3 +174,119 @@ class CountingLine:
         stale = set(self._prev_pos.keys()) - active_track_ids
         for tid in stale:
             self._prev_pos.pop(tid, None)
+            self._first_pos.pop(tid, None)
+            self._display_crossed_ids.discard(tid)
+
+
+class DetectionCrossCounter:
+    """
+    Detection-based crossing counter — works directly from raw YOLO Detection
+    objects, completely independent of ByteTrack track IDs.
+
+    Uses greedy nearest-neighbour matching between consecutive frames to follow
+    vehicle centroids.  Because it never waits for ByteTrack to confirm a track,
+    it reliably counts small, fast-moving vehicles (motorcycles / scooters) that
+    ByteTrack loses or reassigns frequently.
+
+    This runs in parallel with CountingLine; MetricsAggregator uses this counter
+    as the primary VPM source.
+    """
+
+    def __init__(self, line_pos: float, orientation: str,
+                 max_match_pixels: float = 120.0,
+                 dedup_pixels: float = 25.0,
+                 dedup_frames: int = 5):
+        """
+        Args:
+            line_pos        : absolute pixel position of the counting line
+            orientation     : "horizontal" or "vertical"
+            max_match_pixels: maximum L1 centroid displacement to consider two
+                              detections the same vehicle across consecutive frames
+            dedup_pixels    : suppress a crossing if one was registered within
+                              this many pixels on the parallel axis recently
+            dedup_frames    : temporal window for spatial dedup
+        """
+        self.line_pos = line_pos
+        self.orientation = orientation
+        self.max_match_pixels = max_match_pixels
+        self.dedup_pixels = dedup_pixels
+        self.dedup_frames = dedup_frames
+
+        # centroid list from the previous frame: [(cross_axis, parallel_axis), ...]
+        self._prev_centroids: list[tuple[float, float]] = []
+        # (parallel_pos, frame_num) — for spatial/temporal dedup
+        self._recent_crossings: list[tuple[float, int]] = []
+        self._crossing_count: int = 0
+        self._frame_num: int = 0
+
+    # ── helpers ──────────────────────────────────────────────────────────────
+
+    def _axes(self, det) -> tuple[float, float]:
+        """Return (cross_axis, parallel_axis) centroid for a detection."""
+        cx = (det.x1 + det.x2) * 0.5
+        cy = (det.y1 + det.y2) * 0.5
+        return (cy, cx) if self.orientation == "horizontal" else (cx, cy)
+
+    def _is_duplicate(self, parallel_pos: float) -> bool:
+        cutoff = self._frame_num - self.dedup_frames
+        for pos, fn in self._recent_crossings:
+            if fn >= cutoff and abs(pos - parallel_pos) < self.dedup_pixels:
+                return True
+        return False
+
+    # ── public API ────────────────────────────────────────────────────────────
+
+    def update(self, roi_detections: list) -> int:
+        """
+        Process one frame's ROI detections and return new crossing count.
+
+        Args:
+            roi_detections: list of Detection objects that passed the ROI filter
+        """
+        self._frame_num += 1
+        new_crossings = 0
+
+        current = [self._axes(d) for d in roi_detections]
+
+        if self._prev_centroids and current:
+            used_prev: set[int] = set()
+
+            for curr_cross, curr_par in current:
+                best_dist = self.max_match_pixels
+                best_idx = -1
+
+                for i, (prev_cross, prev_par) in enumerate(self._prev_centroids):
+                    if i in used_prev:
+                        continue
+                    dist = abs(curr_cross - prev_cross) + abs(curr_par - prev_par)
+                    if dist < best_dist:
+                        best_dist = dist
+                        best_idx = i
+
+                if best_idx < 0:
+                    continue  # no close-enough previous detection
+
+                prev_cross, prev_par = self._prev_centroids[best_idx]
+                used_prev.add(best_idx)
+
+                forward  = prev_cross <  self.line_pos <= curr_cross
+                backward = prev_cross >= self.line_pos >  curr_cross
+
+                if (forward or backward) and not self._is_duplicate(curr_par):
+                    self._crossing_count += 1
+                    self._recent_crossings.append((curr_par, self._frame_num))
+                    new_crossings += 1
+
+        self._prev_centroids = current
+        return new_crossings
+
+    def get_count(self) -> int:
+        """Cumulative crossings since last reset."""
+        return self._crossing_count
+
+    def reset_count(self) -> int:
+        """Return the count and reset for the next minute."""
+        count = self._crossing_count
+        self._crossing_count = 0
+        self._recent_crossings.clear()
+        return count

@@ -108,6 +108,12 @@ class StreamUpdate(BaseModel):
     rtsp_url: str
 
 
+class CountingLineUpdate(BaseModel):
+    orientation: str   # "horizontal" or "vertical"
+    x_fraction: float  # 0.0–1.0
+    y_fraction: float  # 0.0–1.0
+
+
 # ─── Endpoints ───
 
 @admin_router.put("/junctions/{junction_id}/peak_periods")
@@ -275,6 +281,46 @@ def update_arm_stream(junction_id: str, arm_id: str, req: StreamUpdate):
 
     logger.info("Updated stream for %s/%s: %s", junction_id, arm_id, req.rtsp_url)
     return {"junction_id": junction_id, "arm_id": arm_id, "rtsp_url": req.rtsp_url}
+
+
+@admin_router.put("/junctions/{junction_id}/arms/{arm_id}/counting_line")
+def update_arm_counting_line(junction_id: str, arm_id: str, req: CountingLineUpdate):
+    """Update the counting line position and orientation for a specific camera arm."""
+    if junction_id not in config.JUNCTIONS:
+        raise HTTPException(404, f"Junction {junction_id} not found")
+    if arm_id not in config.JUNCTIONS[junction_id]["arms"]:
+        raise HTTPException(404, f"Arm {arm_id} not found in junction {junction_id}")
+    if req.orientation not in ("horizontal", "vertical"):
+        raise HTTPException(400, f"Invalid orientation '{req.orientation}'. Must be 'horizontal' or 'vertical'")
+    if not (0.0 <= req.x_fraction <= 1.0):
+        raise HTTPException(400, f"x_fraction {req.x_fraction} must be in [0.0, 1.0]")
+    if not (0.0 <= req.y_fraction <= 1.0):
+        raise HTTPException(400, f"y_fraction {req.y_fraction} must be in [0.0, 1.0]")
+
+    config.JUNCTIONS[junction_id]["arms"][arm_id].update({
+        "counting_line_orientation": req.orientation,
+        "counting_line_x_fraction": req.x_fraction,
+        "counting_line_y_fraction": req.y_fraction,
+    })
+
+    _overrides.setdefault(junction_id, {}).setdefault("arms", {}).setdefault(arm_id, {}).update({
+        "counting_line_orientation": req.orientation,
+        "counting_line_x_fraction": req.x_fraction,
+        "counting_line_y_fraction": req.y_fraction,
+    })
+    _save_overrides()
+
+    logger.info(
+        "Updated counting_line for %s/%s: orientation=%s x=%.3f y=%.3f",
+        junction_id, arm_id, req.orientation, req.x_fraction, req.y_fraction,
+    )
+    return {
+        "junction_id": junction_id,
+        "arm_id": arm_id,
+        "orientation": req.orientation,
+        "x_fraction": req.x_fraction,
+        "y_fraction": req.y_fraction,
+    }
 
 
 @admin_router.post("/junctions/{junction_id}/arms")

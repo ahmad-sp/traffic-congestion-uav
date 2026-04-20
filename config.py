@@ -51,13 +51,13 @@ YOLO_DEVICE = os.getenv("YOLO_DEVICE", "cpu")  # "cpu", "cuda:0", etc.
 # ─────────────────────────────────────────────
 TRACK_HIGH_THRESH = 0.5        # detection confidence for first association
 TRACK_LOW_THRESH = 0.1         # detection confidence for second association
-TRACK_MATCH_THRESH = 0.7       # IoU threshold (lowered from 0.8 to reduce ID switches)
+TRACK_MATCH_THRESH = 0.7       # IoU threshold for track matching
 TRACK_BUFFER = 30              # frames to keep lost tracks (= 6 seconds at 5 FPS)
 TRACK_FRAME_RATE = FRAME_RATE
 
 # Counting deduplication
-MIN_TRACK_AGE_FRAMES = 3       # track must exist this many frames before it can be counted
-CROSSING_DEDUP_PIXELS = 50.0   # suppress crossing if another track crossed within this distance recently
+MIN_TRACK_AGE_FRAMES = 1       # track must exist this many frames before it can be counted
+CROSSING_DEDUP_PIXELS = 25.0   # suppress crossing if another track crossed within this distance recently
 
 # ─────────────────────────────────────────────
 # MOTION & QUEUE ANALYSIS
@@ -76,7 +76,7 @@ FAR_ZONE_UPPER_Y_RATIO = 0.4  # upper boundary for far-zone bbox growth rate cal
 # "vertical"   = line down the frame at an X-fraction (vehicles move left↔right)
 COUNTING_LINE_ORIENTATION = os.getenv("COUNTING_LINE_ORIENTATION", "horizontal")
 COUNTING_LINE_X_FRACTION = float(os.getenv("COUNTING_LINE_X", "0.5"))
-COUNTING_LINE_Y_FRACTION_LINE = float(os.getenv("COUNTING_LINE_Y", "0.70"))
+COUNTING_LINE_Y_FRACTION_LINE = float(os.getenv("COUNTING_LINE_Y", "0.40"))
 
 # Queue depth: near-zone stopped count sustained over this many seconds
 QUEUE_DEPTH_SUSTAIN_SECONDS = 30
@@ -304,3 +304,21 @@ def get_arm_config(junction_id: str, arm_id: str) -> dict:
 def get_junction_peak_periods(junction_id: str) -> list:
     """Return per-junction peak periods, falling back to global PEAK_PERIODS."""
     return JUNCTIONS.get(junction_id, {}).get("peak_periods", PEAK_PERIODS)
+
+
+def get_arm_counting_line_config(junction_id: str, arm_id: str) -> dict:
+    """Return counting line config for a specific arm, falling back to global defaults.
+
+    Arms may store any subset of:
+      counting_line_orientation, counting_line_x_fraction, counting_line_y_fraction
+    Older arms use the legacy key ``counting_line_x`` for x_fraction.
+    """
+    arm = JUNCTIONS.get(junction_id, {}).get("arms", {}).get(arm_id, {})
+    return {
+        "orientation": arm.get("counting_line_orientation", COUNTING_LINE_ORIENTATION),
+        "x_fraction": arm.get(
+            "counting_line_x_fraction",
+            arm.get("counting_line_x", COUNTING_LINE_X_FRACTION),
+        ),
+        "y_fraction": arm.get("counting_line_y_fraction", COUNTING_LINE_Y_FRACTION_LINE),
+    }

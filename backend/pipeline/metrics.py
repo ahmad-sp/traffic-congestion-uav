@@ -18,7 +18,7 @@ import numpy as np
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent.parent))
 import config
 from backend.pipeline.tracking import TrackState
-from backend.pipeline.counting_line import CountingLine
+from backend.pipeline.counting_line import CountingLine, DetectionCrossCounter
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,8 @@ class MetricsAggregator:
 
     def __init__(self, junction_id: str, arm_id: str, frame_height: int, frame_width: int,
                  counting_line_x: float = config.COUNTING_LINE_X_FRACTION,
+                 counting_line_orientation: str = config.COUNTING_LINE_ORIENTATION,
+                 counting_line_y_fraction: float = config.COUNTING_LINE_Y_FRACTION_LINE,
                  recording_start_dt=None,   # datetime (timezone-aware) — offline mode
                  peak_periods=None):        # list[(int,int)] — per-junction override
         self.junction_id = junction_id
@@ -85,8 +87,17 @@ class MetricsAggregator:
         self.counting_line = CountingLine(
             frame_width=frame_width,
             frame_height=frame_height,
+            orientation=counting_line_orientation,
             x_fraction=counting_line_x,
+            y_fraction=counting_line_y_fraction,
         )
+
+        self.det_cross_counter = DetectionCrossCounter(
+            line_pos=self.counting_line.line_pos,
+            orientation=counting_line_orientation,
+        )
+
+        self.last_frame_metrics: FrameMetrics | None = None
 
         # Accumulation buffers (reset each minute)
         self._frame_metrics: list[FrameMetrics] = []
@@ -97,7 +108,8 @@ class MetricsAggregator:
         self._minute_video_ts_start: float = 0.0   # video seconds at start of current minute
         self._last_video_ts: float = 0.0            # updated each frame
 
-    def compute_frame_metrics(self, tracks: list[TrackState], timestamp: float) -> FrameMetrics:
+    def compute_frame_metrics(self, tracks: list[TrackState], timestamp: float,
+                              roi_detections=None) -> FrameMetrics:
         """Compute metrics from the current set of active tracks."""
         near_y = self.frame_height * config.NEAR_ZONE_Y_FRACTION
         far_y = self.frame_height * config.FAR_ZONE_Y_FRACTION
@@ -151,13 +163,18 @@ class MetricsAggregator:
         if fm.near_zone_stopped_count > 0:
             self._near_zone_timestamps.append(timestamp)
 
-        # Update counting line
+        # Update counting line (track-based, for visual coloring)
         crossings = self.counting_line.update(tracks)
         active_ids = {t.track_id for t in tracks}
         self.counting_line.cleanup_stale(active_ids)
 
+        # Detection-based counter — primary VPM source, counts everything in ROI
+        if roi_detections is not None:
+            self.det_cross_counter.update(roi_detections)
+
         self._frame_metrics.append(fm)
         self._last_video_ts = timestamp
+        self.last_frame_metrics = fm
         return fm
 
     def should_aggregate(self) -> bool:
@@ -186,8 +203,13 @@ class MetricsAggregator:
         h_of_w = dt.weekday() * 24 + dt.hour
         is_peak = int(any(s <= dt.hour < e for s, e in self._peak_periods))
 
-        # VPM from counting line
-        vpm = self.counting_line.reset_count()
+        # VPM: detection-based counter is primary (counts every ROI vehicle regardless of
+        # ByteTrack confirmation); track-based counter is reset for display state only.
+        det_vpm = self.det_cross_counter.reset_count()
+        track_vpm = self.counting_line.reset_count()
+        # Use whichever is higher — det_vpm catches small/fast vehicles ByteTrack misses;
+        # track_vpm can be higher when detections are noisy (false positives).
+        vpm = max(det_vpm, track_vpm)
 
         # Queue depth: STOPPED vehicles in near zone sustained over threshold.
         # Only stopped vehicles contribute — moving traffic passing through

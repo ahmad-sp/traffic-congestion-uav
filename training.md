@@ -120,3 +120,120 @@ Use `--device cuda:0` if a GPU is available. Use `--epochs` to adjust training l
   ```bash
   python -m backend.main
   ```
+
+# Counting Line Adjust
+Open config.py and modify Line 79:
+
+python
+## Change this value from 0.70 to whatever you need:
+```bash
+COUNTING_LINE_Y_FRACTION_LINE = float(os.getenv("COUNTING_LINE_Y", "0.50"))
+```
+
+
+
+
+
+
+
+
+# Training with Calibration
+ ## Complete Training Pipeline
+
+  ### Step 1: Label each extracted CSV
+
+  Open each data/*_extracted.csv in Excel/Sheets. Add a label column. Watch the video and label every   
+  row:
+
+  ┌─────────────┬──────────────────────────────────────────────────────────┐
+  │    Label    │                           When                           │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ NORMAL      │ Free-flowing, typical traffic                            │
+  ├─────────────┼──────────────────────────────────────────────────────────┤
+  │ PEAK_EXCESS │ Peak-hour congestion — heavy flow, queues, slow movement │
+  └─────────────┴──────────────────────────────────────────────────────────┘
+
+  ### Step 2: Merge labeled CSVs
+
+  python -m scripts.merge_extracted
+
+  Combines all 17 labeled CSVs → data/real_combined.csv
+
+  ### Step 3: Train the Autoencoder on real data
+  ```bash
+  python -m scripts.train_autoencoder --data data/real_combined.csv --epochs 80
+  ```
+  On gpu:
+
+  ```bash
+  python -m scripts.train_autoencoder --data data/real_combined.csv --epochs 80 --device cuda  
+  ```
+
+  - Trains only on your NORMAL rows (~500+ rows)
+  - 80 epochs is good for small real datasets — gives the AE enough passes to learn your site's normal  
+  patterns without overfitting
+  - Saves: autoencoder.pt, ae_threshold.json, ae_norm_stats.json
+
+  ### Step 4: Generate synthetic data
+```bash
+   python -m scripts.generate_synthetic_data --days 30
+```
+  Produces data/synthetic/all_arms_combined.csv with NORMAL + OFF_PEAK_JAM + PEAK_EXCESS (~86,400 rows  
+  for 2 arms × 30 days).
+
+  ### Step 5: Merge real + synthetic for LSTM
+```bash
+  python -m scripts.merge_lstm_training
+```
+  Combines your real labeled data + synthetic data → data/lstm_training.csv
+
+  ### Step 6: Train the LSTM on combined data
+
+```bash
+  python -m scripts.train_lstm --data data/lstm_training.csv --epochs 60
+```
+  - 60 epochs — the combined dataset is large enough (real + synthetic) that more epochs helps the model
+   see both real and synthetic patterns well
+  - Both heads train: congestion detection + 10-min extreme risk forecast
+  - extreme_congestion_future auto-computed from labels
+  - Saves: lstm_congestion.pt, lstm_norm_stats.json
+
+  ### Step 7: Calibrate to your real site
+
+```bash
+  python -m scripts.calibrate_site --data data/real_combined.csv
+```
+  - Overwrites lstm_norm_stats.json with your real feature distributions
+  - Recalibrates ae_threshold.json to your site
+  - Creates hourly_baseline.json for Warrant 3
+
+  ### Step 8: Verify
+
+  ls models_saved/
+
+  ┌──────────────────────┬───────────┬───────────────────────────────────────────────┐
+  │         File         │ From Step │                    Purpose                    │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ autoencoder.pt       │ 3         │ Anomaly detector (trained on real)            │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ ae_norm_stats.json   │ 3         │ AE normalization (real)                       │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ ae_threshold.json    │ 7         │ Anomaly threshold (recalibrated to real)      │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ lstm_congestion.pt   │ 6         │ Congestion + early warning (real + synthetic) │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ lstm_norm_stats.json │ 7         │ LSTM normalization (recalibrated to real)     │
+  ├──────────────────────┼───────────┼───────────────────────────────────────────────┤
+  │ hourly_baseline.json │ 7         │ VPM baselines for Warrant 3                   │
+  └──────────────────────┴───────────┴───────────────────────────────────────────────┘
+
+  ---                                                                                                     Epoch guidance
+                                                                                                        
+  ┌─────────────┬─────────────────┬────────────────┬───────────────────────────────────────────────┐    
+  │    Model    │  Dataset size   │  Recommended   │                      Why                      │      │             │                 │     epochs     │                                               │
+  ├─────────────┼─────────────────┼────────────────┼───────────────────────────────────────────────┤    
+  │ Autoencoder │ ~500 real       │ 80             │ Small dataset needs more passes, AE is simple │    
+  │             │ NORMAL rows     │                │  (10→8→10) so low overfit risk                │      ├─────────────┼─────────────────┼────────────────┼───────────────────────────────────────────────┤
+  │ LSTM        │ ~87,000         │ 60             │ Large dataset, dual-head model needs enough   │    
+  │             │ combined rows   │                │ epochs to converge on both heads              │      └─────────────┴─────────────────┴────────────────┴───────────────────────────────────────────────┘
+                                                                                                          If you have a GPU, add --device cuda to both training commands to speed it up. 

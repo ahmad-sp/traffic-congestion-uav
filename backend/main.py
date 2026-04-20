@@ -287,45 +287,137 @@ def _run_demo_simulation():
     logger.info("Demo simulation complete — all cameras processed")
 
 
-def _draw_preview(frame, tracks, roi_contour, counting_line_x):
-    """Annotate a frame with ROI polygon, counting line, and tracked vehicles.
+def _draw_preview(frame, tracks, roi_contour, cl_cfg, hud_stats, view_mode="full",
+                  all_detections=None, roi_detections=None):
+    """Annotate a frame with a HUD, counting line, ROI, detections, and track state.
 
-    All OpenCV drawing happens on a copy so the original frame is untouched.
-    Returns the annotated image.
+    Mirrors process_video_interactive.py: YOLO detection boxes are drawn for every
+    vehicle in every frame (green = inside ROI, dim = outside), then track state
+    (crossed / not yet crossed) is overlaid on top so the display is never gated
+    on ByteTrack confirmation delay.
+
+    Parameters
+    ----------
+    frame           : raw BGR frame
+    tracks          : list[TrackState] — ByteTrack output for the current frame
+    roi_contour     : numpy contour array or None
+    cl_cfg          : dict with keys orientation, x_fraction, y_fraction
+    hud_stats       : dict — metrics to display in the top-right HUD panel
+    view_mode       : "full" draws all overlays; "stats" draws only the HUD
+    all_detections  : list[Detection] — raw YOLO output (full frame)
+    roi_detections  : list[Detection] — YOLO output after ROI filter
     """
     import cv2
+    import numpy as np
 
     display = frame.copy()
     h, w = display.shape[:2]
 
-    # ROI polygon — translucent green fill + solid border
-    if roi_contour is not None:
-        overlay = display.copy()
-        cv2.fillPoly(overlay, [roi_contour], (0, 120, 0))
-        cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
-        cv2.polylines(display, [roi_contour], True, (0, 255, 0), 2)
+    orientation = cl_cfg.get("orientation", "horizontal")
+    x_fraction  = cl_cfg.get("x_fraction", 0.5)
+    y_fraction  = cl_cfg.get("y_fraction", 0.40)
 
-    # Counting line — yellow
-    if config.COUNTING_LINE_ORIENTATION == "horizontal":
-        line_y = int(h * config.COUNTING_LINE_Y_FRACTION_LINE)
-        cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
-        cv2.putText(display, "COUNTING LINE", (10, line_y - 8),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+    if view_mode == "full":
+        # ROI polygon — translucent green fill + solid border
+        if roi_contour is not None:
+            overlay = display.copy()
+            cv2.fillPoly(overlay, [roi_contour], (0, 120, 0))
+            cv2.addWeighted(overlay, 0.15, display, 0.85, 0, display)
+            cv2.polylines(display, [roi_contour], True, (0, 255, 0), 2)
+
+        # Counting line — yellow
+        if orientation == "horizontal":
+            line_y = int(h * y_fraction)
+            cv2.line(display, (0, line_y), (w, line_y), (0, 255, 255), 2)
+            cv2.putText(display, "COUNTING LINE", (10, line_y - 8),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+        else:
+            line_x = int(w * x_fraction)
+            cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
+            cv2.putText(display, "COUNTING LINE", (line_x + 6, 20),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 255), 1)
+
+        # ── Layer 1: raw YOLO detection boxes ───────────────────────────────
+        # Matches process_video_interactive.py: every YOLO hit is visible
+        # immediately, regardless of ByteTrack confirmation state.
+        # Green  = inside ROI (will be tracked / is being tracked)
+        # Gray   = outside ROI (shown dimly for situational awareness)
+        if all_detections is not None:
+            roi_det_ids = {id(d) for d in (roi_detections or [])}
+            for d in all_detections:
+                bx1, by1, bx2, by2 = int(d.x1), int(d.y1), int(d.x2), int(d.y2)
+                if id(d) in roi_det_ids:
+                    cv2.rectangle(display, (bx1, by1), (bx2, by2), (0, 200, 0), 1)
+                else:
+                    cv2.rectangle(display, (bx1, by1), (bx2, by2), (60, 60, 60), 1)
+
+        # ── Layer 2: ByteTrack state overlays ───────────────────────────────
+        # Draw a thicker border + label only for confirmed tracks so the
+        # crossing / stopped status is unambiguous.
+        crossed_ids = hud_stats.get("crossed_ids", set())
+        for t in tracks:
+            bx1, by1, bx2, by2 = (int(v) for v in t.bbox)
+            if t.track_id in crossed_ids:
+                # Counted vehicle — bright GREEN border + ID + COUNT
+                cv2.rectangle(display, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
+                cv2.putText(display, f"ID:{t.track_id}", (bx1, by1 - 16),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
+                cv2.putText(display, "COUNT", (bx1, by1 - 4),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.42, (0, 255, 0), 1)
+            else:
+                # Tracked but not yet crossed — RED border, no label
+                cv2.rectangle(display, (bx1, by1), (bx2, by2), (0, 0, 255), 2)
+
+    # ── Top-right HUD panel ──────────────────────────────────────────────────
+    frame_num   = hud_stats.get("frame_num", 0)
+    total_frames = hud_stats.get("total_frames", None)
+    vehicles    = hud_stats.get("vehicles", 0)
+    stopped     = hud_stats.get("stopped", 0)
+    vpm         = hud_stats.get("vpm", 0)
+    crossings   = hud_stats.get("crossings", 0)
+    occupancy   = hud_stats.get("occupancy_pct", 0.0)
+    queue       = hud_stats.get("queue", 0)
+
+    if total_frames and total_frames > 0:
+        pct = int(frame_num * 100 / total_frames)
+        frame_line = f"Frame: {frame_num}/{total_frames} ({pct}%)"
     else:
-        line_x = int(w * counting_line_x)
-        cv2.line(display, (line_x, 0), (line_x, h), (0, 255, 255), 2)
-        cv2.putText(display, "COUNTING LINE", (line_x + 6, 20),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+        frame_line = f"Frame: {frame_num}"
 
-    # Tracked vehicles — green bbox + track ID
-    for t in tracks:
-        bx1, by1, bx2, by2 = (int(v) for v in t.bbox)
-        cv2.rectangle(display, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
-        label = f"ID:{t.track_id}"
-        if t.is_stopped:
-            label += " [STOPPED]"
-        cv2.putText(display, label, (bx1, by1 - 6),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.45, (255, 255, 255), 1)
+    hud_lines = [
+        frame_line,
+        f"Vehicles: {vehicles}  Stopped: {stopped}",
+        f"VPM: {vpm}  Crossings: {crossings}",
+        f"Occupancy: {occupancy:.1f}%  Queue: {queue}",
+    ]
+
+    font       = cv2.FONT_HERSHEY_SIMPLEX
+    font_scale = 0.45
+    thickness  = 1
+    pad        = 6
+    line_h     = 16
+
+    max_tw = max(cv2.getTextSize(ln, font, font_scale, thickness)[0][0] for ln in hud_lines)
+    panel_w = max_tw + pad * 2
+    panel_h = len(hud_lines) * line_h + pad * 2
+    px1 = w - panel_w - 8
+    py1 = 8
+    px2 = w - 8
+    py2 = py1 + panel_h
+
+    # Semi-transparent black background
+    roi_patch = display[py1:py2, px1:px2]
+    black_patch = np.zeros_like(roi_patch)
+    cv2.addWeighted(black_patch, 0.6, roi_patch, 0.4, 0, roi_patch)
+    display[py1:py2, px1:px2] = roi_patch
+
+    for i, line in enumerate(hud_lines):
+        ty = py1 + pad + (i + 1) * line_h - 3
+        cv2.putText(display, line, (px1 + pad, ty), font, font_scale, (200, 200, 200), thickness)
+
+    # ── Bottom-left hint ────────────────────────────────────────────────────
+    hint = "Live Preview | 'v': toggle view | 'q': close"
+    cv2.putText(display, hint, (8, h - 10), font, 0.42, (160, 160, 160), 1)
 
     return display
 
@@ -367,8 +459,14 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
     else:
         logger.warning("No ROI configured for %s — processing full frame", camera_id)
 
-    counting_line_x = config.COUNTING_LINE_X_FRACTION
+    cl_cfg = config.get_arm_counting_line_config(junction_id, arm_id)
     peak_periods = config.JUNCTIONS.get(junction_id, {}).get("peak_periods", config.PEAK_PERIODS)
+
+    # Preview state (per-camera)
+    view_mode = "full"
+    frame_count = 0
+    last_vpm = 0
+    win_title = f"{camera_id} | 'v': toggle view | 'q': close"
 
     while True:
         packet = ingestion.get_frame(camera_id, timeout=2.0)
@@ -377,6 +475,7 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
 
         frame = packet.frame
         h, w = frame.shape[:2]
+        frame_count += 1
 
         # Lazy-init aggregator once we know frame dimensions
         if aggregator is None:
@@ -385,23 +484,46 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
                 arm_id=arm_id,
                 frame_height=h,
                 frame_width=w,
+                counting_line_orientation=cl_cfg["orientation"],
+                counting_line_x=cl_cfg["x_fraction"],
+                counting_line_y_fraction=cl_cfg["y_fraction"],
                 peak_periods=peak_periods,
             )
             logger.info("Aggregator created for %s (%dx%d)", camera_id, w, h)
 
         # --- Detect → ROI filter → track → per-frame metrics ---
-        detections = detector.detect(frame)
-        if roi:
-            detections = roi.filter(detections)
-        det_array = detector.detections_to_array(detections)
+        all_detections = detector.detect(frame)
+        roi_detections = roi.filter(all_detections) if roi else all_detections
+        det_array = detector.detections_to_array(roi_detections)
         tracks = tracker.update(det_array, frame)
-        aggregator.compute_frame_metrics(tracks, packet.timestamp)
+        aggregator.compute_frame_metrics(tracks, packet.timestamp, roi_detections=roi_detections)
 
         # --- Live preview (all OpenCV calls inside this thread) ---
         if show_preview:
-            display = _draw_preview(frame, tracks, roi_contour, counting_line_x)
-            cv2.imshow(camera_id, display)
-            cv2.waitKey(1)
+            fm = aggregator.last_frame_metrics
+            total_frames = getattr(packet, "total_frames", None)
+            hud_stats = {
+                "frame_num":    frame_count,
+                "total_frames": total_frames,
+                "vehicles":     len(tracks),
+                "stopped":      sum(1 for t in tracks if t.is_stopped),
+                "vpm":          last_vpm,
+                "crossings":    aggregator.det_cross_counter.get_count(),
+                "occupancy_pct": fm.occupancy_ratio if fm else 0.0,
+                "queue":        fm.near_zone_stopped_count if fm else 0,
+                "crossed_ids":  aggregator.counting_line._display_crossed_ids,
+            }
+            display = _draw_preview(
+                frame, tracks, roi_contour, cl_cfg, hud_stats, view_mode,
+                all_detections=all_detections, roi_detections=roi_detections,
+            )
+            cv2.imshow(win_title, display)
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                cv2.destroyWindow(win_title)
+                show_preview = False
+            elif key == ord('v'):
+                view_mode = "stats" if view_mode == "full" else "full"
 
         # --- Per-minute aggregation ---
         if not aggregator.should_aggregate():
@@ -410,6 +532,8 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
         mm = aggregator.aggregate_minute()
         if mm is None:
             continue
+
+        last_vpm = mm.VPM
 
         features = {
             "VPM": mm.VPM,

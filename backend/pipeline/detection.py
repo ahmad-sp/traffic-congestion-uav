@@ -101,11 +101,14 @@ class VehicleDetector:
 
     @staticmethod
     def _suppress_small_vehicle_duplicates(detections: list[Detection],
-                                           iou_thresh: float = 0.3) -> list[Detection]:
+                                           iou_thresh: float = 0.5) -> list[Detection]:
         """
-        Extra NMS pass for bicycle/motorcycle detections (class_id 1, 3) with a
-        lower IoU threshold to merge double-detections that YOLO's built-in
-        NMS misses.
+        Extra NMS pass for bicycle/motorcycle detections (class_id 1, 3) to merge
+        double-detections that YOLO's built-in NMS misses (e.g. front-wheel + body
+        boxes for the same vehicle).
+
+        Threshold is intentionally high (0.5) so that adjacent motorcycles riding
+        side-by-side are NOT suppressed — only boxes with >50% overlap are merged.
         """
         # Separate small two-wheeler detections from the rest
         _SMALL_CLASSES = {1, 3}  # bicycle, motorcycle

@@ -26,10 +26,28 @@ cd traffic_system/frontend && npm run dev
 
 Open **http://localhost:3000**
 
-## With real cameras
+## With real cameras (CCTV/RTSP)
 
+**Step 1 — Find your RTSP URL**
+- Open your NVR/DVR web interface → Settings → Network → RTSP
+- Or use [ONVIF Device Manager](https://sourceforge.net/projects/onvifdm/) to auto-discover cameras
+
+Common formats:
+| Brand | URL |
+|-------|-----|
+| Hikvision | `rtsp://user:pass@IP:554/Streaming/Channels/101` |
+| Dahua | `rtsp://user:pass@IP:554/cam/realmonitor?channel=1&subtype=0` |
+| Generic | `rtsp://user:pass@IP:554/stream1` |
+
+**Step 2 — Calibrate ROI for each camera**
 ```bash
-export JCT01_ARM_NORTH_RTSP="rtsp://user:pass@192.168.1.10/stream"
+python scripts/setup_roi.py --camera JCT01_ARM_NORTH --source "rtsp://user:pass@IP:554/stream"
+# Click polygon vertices, press Enter to save
+```
+
+**Step 3 — Run**
+```bash
+$env:JCT01_ARM_NORTH_RTSP="rtsp://user:pass@192.168.1.10/stream"
 # repeat for each arm
 python -m backend.main
 ```
@@ -54,7 +72,7 @@ python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM
 ```bash
 $env:DEMO_MODE="true"
 python -m backend.main
-
+```
 
 **What the preview window shows:**
 - Green bounding boxes = vehicles **inside** the ROI (tracked)
@@ -91,20 +109,24 @@ python scripts/preview_detection.py --video path/to/video.mp4 --camera JCT01_ARM
 | q, ESC | Quit |
 | s | Save current frame as PNG screenshot |
 
-## Video with ROI saving (For videos)
+## Video file as live pipeline (DEMO_VIDEO_PATH)
+
+Feeds a local MP4 through the full live pipeline (YOLO → ByteTrack → counting → metrics → alerts).
+**ROI must be set up first**, otherwise detection runs on the full frame.
 
 ```bash
-# ROI Calibration
-python scripts/preview_detection.py --video "C:\Users\PC\Desktop\koduvally data\site1\00006.mp4" --camera JCT01_ARM_NORTH --draw-roi --save-roi JCT01_ARM_NORTH
+# Step 1 — Calibrate ROI (one-time per camera)
+python scripts/setup_roi.py --camera JCT01_ARM_NORTH --source "C:\Users\PC\Desktop\koduvally data\site1\00006.mp4"
+# Click polygon vertices on the frame, press Enter to save
 
-# Start Video for metrics with only one video
+# Step 2 — Run pipeline with video as source
 $env:DEMO_VIDEO_PATH="C:\Users\PC\Desktop\koduvally data\site1\00006.mp4"
 python -m backend.main
+# Answer 'y' to show live OpenCV preview window
 
-#add path to add camera and then set roi
-python scripts/preview_detection.py --video "C:\Users\PC\Desktop\video2.mp4" --camera JCT01_ARM_SOUTH --draw-roi --save-roi JCT01_ARM_SOUTH
-
-python -m backend.main
+# For multiple arms with different videos, set per-arm RTSP env vars instead:
+$env:JCT01_ARM_NORTH_RTSP=""   # leave blank to use DEMO_VIDEO_PATH fallback
+$env:JCT01_ARM_SOUTH_RTSP=""
 ```
 
 

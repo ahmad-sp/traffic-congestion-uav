@@ -696,6 +696,209 @@ function UpdateStreamTab({ junctions }) {
   )
 }
 
+// ─── Tab 6: Counting Line ───
+
+function CountingLineTab({ junctions, onJunctionUpdate }) {
+  const [selectedJid, setSelectedJid] = useState('')
+  const [selectedAid, setSelectedAid] = useState('')
+  const [orientation, setOrientation] = useState('horizontal')
+  const [xFraction, setXFraction] = useState(0.5)
+  const [yFraction, setYFraction] = useState(0.4)
+  const [status, setStatus] = useState(null)
+
+  const selectedJunction = junctions.find((j) => j.junction_id === selectedJid)
+  const selectedArm = selectedJunction?.arms?.find((a) => a.arm_id === selectedAid)
+
+  function selectJunction(jid) {
+    setSelectedJid(jid)
+    setSelectedAid('')
+    setStatus(null)
+  }
+
+  function selectArm(aid) {
+    setSelectedAid(aid)
+    setStatus(null)
+    // Pre-fill with arm's current values if available
+    const arm = selectedJunction?.arms?.find((a) => a.arm_id === aid)
+    if (arm) {
+      setOrientation(arm.counting_line_orientation || 'horizontal')
+      setXFraction(arm.counting_line_x_fraction ?? arm.counting_line_x ?? 0.5)
+      setYFraction(arm.counting_line_y_fraction ?? 0.4)
+    }
+  }
+
+  async function save() {
+    setStatus(null)
+    try {
+      const res = await fetch(
+        `${API}/admin/junctions/${selectedJid}/arms/${selectedAid}/counting_line`,
+        {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            orientation,
+            x_fraction: xFraction,
+            y_fraction: yFraction,
+          }),
+        }
+      )
+      const data = await res.json()
+      if (!res.ok) {
+        setStatus({ ok: false, msg: data.detail || 'Error saving' })
+        return
+      }
+      setStatus({ ok: true, msg: `Saved for ${selectedJid}/${selectedAid}` })
+      onJunctionUpdate()
+    } catch {
+      setStatus({ ok: false, msg: 'Network error' })
+    }
+  }
+
+  // SVG preview dimensions
+  const PW = 240
+  const PH = 135
+
+  return (
+    <div className="space-y-4">
+      <InfoBanner text="Changes take effect on the next pipeline restart. The counting line position is used to measure vehicles per minute (VPM)." />
+
+      <div className="grid grid-cols-2 gap-2">
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Junction</label>
+          <select
+            value={selectedJid}
+            onChange={(e) => selectJunction(e.target.value)}
+            className="bg-gray-700 text-gray-200 text-sm rounded px-2 py-1.5 w-full"
+          >
+            <option value="">Select…</option>
+            {junctions.map((j) => (
+              <option key={j.junction_id} value={j.junction_id}>
+                {j.junction_id} — {j.name}
+              </option>
+            ))}
+          </select>
+        </div>
+        <div>
+          <label className="block text-xs text-gray-400 mb-1">Camera arm</label>
+          <select
+            value={selectedAid}
+            onChange={(e) => selectArm(e.target.value)}
+            disabled={!selectedJunction}
+            className="bg-gray-700 text-gray-200 text-sm rounded px-2 py-1.5 w-full disabled:opacity-50"
+          >
+            <option value="">Select…</option>
+            {(selectedJunction?.arms || []).map((a) => (
+              <option key={a.arm_id} value={a.arm_id}>{a.arm_id} — {a.name}</option>
+            ))}
+          </select>
+        </div>
+      </div>
+
+      {selectedJid && selectedAid && (
+        <>
+          {/* Orientation */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Orientation</label>
+            <div className="flex gap-3">
+              {['horizontal', 'vertical'].map((opt) => (
+                <label key={opt} className="flex items-center gap-1.5 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="orientation"
+                    value={opt}
+                    checked={orientation === opt}
+                    onChange={() => setOrientation(opt)}
+                    className="accent-amber-400"
+                  />
+                  <span className="text-sm text-gray-300 capitalize">{opt}</span>
+                </label>
+              ))}
+            </div>
+          </div>
+
+          {/* Sliders */}
+          {orientation === 'vertical' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                X position (left ← → right): <strong className="text-gray-200">{(xFraction * 100).toFixed(0)}%</strong>
+              </label>
+              <input
+                type="range" min="0.05" max="0.95" step="0.01"
+                value={xFraction}
+                onChange={(e) => setXFraction(parseFloat(e.target.value))}
+                className="w-full accent-amber-400"
+              />
+            </div>
+          )}
+          {orientation === 'horizontal' && (
+            <div>
+              <label className="block text-xs text-gray-400 mb-1">
+                Y position (top ↑ ↓ bottom): <strong className="text-gray-200">{(yFraction * 100).toFixed(0)}%</strong>
+              </label>
+              <input
+                type="range" min="0.05" max="0.95" step="0.01"
+                value={yFraction}
+                onChange={(e) => setYFraction(parseFloat(e.target.value))}
+                className="w-full accent-amber-400"
+              />
+            </div>
+          )}
+
+          {/* Live SVG preview */}
+          <div>
+            <label className="block text-xs text-gray-400 mb-1">Preview</label>
+            <svg
+              width={PW} height={PH}
+              className="rounded border border-gray-600 bg-gray-900"
+            >
+              {/* Frame outline */}
+              <rect x="0" y="0" width={PW} height={PH} fill="#111" />
+              {/* Counting line */}
+              {orientation === 'horizontal' ? (
+                <>
+                  <line
+                    x1="0" y1={PH * yFraction}
+                    x2={PW} y2={PH * yFraction}
+                    stroke="#00FFFF" strokeWidth="2"
+                  />
+                  <text x="4" y={PH * yFraction - 4} fill="#00FFFF" fontSize="9">COUNTING LINE</text>
+                </>
+              ) : (
+                <>
+                  <line
+                    x1={PW * xFraction} y1="0"
+                    x2={PW * xFraction} y2={PH}
+                    stroke="#00FFFF" strokeWidth="2"
+                  />
+                  <text x={PW * xFraction + 4} y="14" fill="#00FFFF" fontSize="9">COUNTING LINE</text>
+                </>
+              )}
+              {/* Example vehicle boxes */}
+              <rect x="30" y="60" width="28" height="20" fill="none" stroke="#FF3333" strokeWidth="1.5" />
+              <rect x="80" y="30" width="28" height="20" fill="none" stroke="#FF3333" strokeWidth="1.5" />
+              <rect x="150" y="75" width="28" height="20" fill="none" stroke="#00FF00" strokeWidth="1.5" />
+              <text x="150" y="73" fill="#00FF00" fontSize="7">COUNT</text>
+            </svg>
+          </div>
+
+          <button
+            onClick={save}
+            className="bg-green-700 hover:bg-green-600 text-white text-sm px-4 py-1.5 rounded w-full"
+          >
+            Save Counting Line
+          </button>
+
+          {status && (
+            <p className={`text-xs ${status.ok ? 'text-green-400' : 'text-red-400'}`}>
+              {status.msg}
+            </p>
+          )}
+        </>
+      )}
+    </div>
+  )
+}
+
 // ─── Main AdminPanel ───
 
 const TABS = [
@@ -704,6 +907,7 @@ const TABS = [
   { id: 'junction', label: 'New Junction' },
   { id: 'camera', label: 'Add Camera' },
   { id: 'stream', label: 'Update Stream' },
+  { id: 'counting', label: 'Counting Line' },
 ]
 
 export default function AdminPanel({
@@ -773,6 +977,9 @@ export default function AdminPanel({
         )}
         {activeTab === 'stream' && (
           <UpdateStreamTab junctions={junctions} />
+        )}
+        {activeTab === 'counting' && (
+          <CountingLineTab junctions={junctions} onJunctionUpdate={onJunctionUpdate} />
         )}
       </div>
     </div>

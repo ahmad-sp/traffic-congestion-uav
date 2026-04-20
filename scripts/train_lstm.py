@@ -41,11 +41,17 @@ def create_sequences(df: pd.DataFrame, seq_len: int):
     # Label 1: congestion (1.0 if any abnormal event in the label column)
     labels_cong = (df["label"] != "NORMAL").astype(np.float32).values
 
-    # Label 2: extreme congestion future (will queue appear in next 10 min?)
+    # Label 2: extreme congestion future (will congestion appear in next 10 min?)
+    # Use pre-computed column if present; otherwise derive from label column.
     if "extreme_congestion_future" in df.columns:
         labels_extreme = df["extreme_congestion_future"].astype(np.float32).values
     else:
+        window = getattr(config, "EXTREME_CONGESTION_FORECAST_WINDOW", 10)
         labels_extreme = np.zeros(len(df), dtype=np.float32)
+        is_congested = (df["label"] != "NORMAL").values
+        for i in range(len(df) - window):
+            if is_congested[i + 1 : i + 1 + window].any():
+                labels_extreme[i] = 1.0
 
     # Normalize features per column (store stats for inference)
     means = features.mean(axis=0)

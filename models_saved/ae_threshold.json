@@ -1,7 +1,8 @@
 {
-  "anomaly_threshold": 0.003918503178283559,
+  "anomaly_threshold": 0.07931772619485855,
   "percentile": 95,
-  "mean_error": 0.000693226233124733,
-  "std_error": 0.001744517358019948,
-  "max_error": 0.06044556945562363
+  "mean_error": 0.026621583849191666,
+  "std_error": 0.03275908902287483,
+  "max_error": 0.32893460988998413,
+  "calibrated_from_n_samples": 995
 }
