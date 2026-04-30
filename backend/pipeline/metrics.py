@@ -95,6 +95,9 @@ class MetricsAggregator:
         self.det_cross_counter = DetectionCrossCounter(
             line_pos=self.counting_line.line_pos,
             orientation=counting_line_orientation,
+            max_match_pixels=config.DET_CROSS_MAX_MATCH_PIXELS,
+            dedup_pixels=config.DET_CROSS_DEDUP_PIXELS,
+            dedup_frames=config.DET_CROSS_DEDUP_FRAMES,
         )
 
         self.last_frame_metrics: FrameMetrics | None = None

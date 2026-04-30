@@ -88,19 +88,38 @@ def on_alert_callback(alert: Alert):
         }
     ))
 
-    # If RED → compile drone trigger
-    if alert.level == "RED":
-        packet = drone_manager.compile_trigger(alert)
-        try:
-            db = SessionLocal()
-            crud.save_drone_trigger(db, packet.to_dict())
-            db.close()
-        except Exception as e:
-            logger.error("Failed to save drone trigger: %s", e)
+    # Drone dispatch is gated separately — see _check_drone_dispatch, called
+    # from the per-minute warrant loop. A single RED alert no longer launches
+    # the drone on its own; we require sustained RED across multiple minutes.
 
-        _broadcast_from_thread(ws_manager.send_drone_trigger(
-            alert.junction_id, alert.arm_id, packet.to_dict()
-        ))
+
+def _check_drone_dispatch(
+    junction_id: str,
+    arm_id: str,
+    warrant_alert_level: str,
+    alert: Alert | None,
+) -> None:
+    """
+    Per-minute hook: feed this minute's RED/not-RED observation to the drone
+    manager, and if sustained-RED confirmation has just been reached,
+    compile + persist + broadcast the drone trigger packet.
+    """
+    is_red = warrant_alert_level == "RED"
+    confirmed = drone_manager.observe_minute(junction_id, arm_id, is_red, alert)
+    if confirmed is None:
+        return
+
+    packet = drone_manager.compile_trigger(confirmed)
+    try:
+        db = SessionLocal()
+        crud.save_drone_trigger(db, packet.to_dict())
+        db.close()
+    except Exception as e:
+        logger.error("Failed to save drone trigger: %s", e)
+
+    _broadcast_from_thread(ws_manager.send_drone_trigger(
+        confirmed.junction_id, confirmed.arm_id, packet.to_dict()
+    ))
 
 
 def on_early_red_callback(event: dict):
@@ -237,6 +256,9 @@ def _run_demo_simulation():
                 queue_depth=row["queue_depth"],
             )
 
+            # Per-minute drone gate: sustained-RED confirmation
+            _check_drone_dispatch(jid, aid, warrant_output.alert_level, alert)
+
             # Check for EARLY_RED (extreme congestion prediction)
             if alert is None or alert.level not in ("RED",):
                 alert_manager.process_extreme_risk(
@@ -267,11 +289,9 @@ def _run_demo_simulation():
             except Exception as e:
                 logger.error("Failed to save minute metrics: %s", e)
 
-            # Update latest metrics in shared state (used by REST /junction/{id}/status)
-            _state.update_latest_metrics(jid, aid, features)
-
-            # Broadcast live metrics to WebSocket clients
-            _broadcast_from_thread(ws_manager.send_metrics(jid, aid, {
+            # Update shared state and broadcast — include ML scores so the REST
+            # fallback (/junction/{id}/status) returns the same data as the WS push.
+            full_metrics = {
                 **features,
                 "VPM": int(row["VPM"]),
                 "queue_depth": int(row["queue_depth"]),
@@ -279,7 +299,9 @@ def _run_demo_simulation():
                 "anomaly_score": ml_result["anomaly_score"],
                 "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
                 "alert_level": warrant_output.alert_level,
-            }))
+            }
+            _state.update_latest_metrics(jid, aid, full_metrics)
+            _broadcast_from_thread(ws_manager.send_metrics(jid, aid, full_metrics))
 
         # Advance one simulated minute — all cameras updated before this sleep
         time.sleep(0.05)
@@ -574,6 +596,9 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
             queue_depth=mm.queue_depth,
         )
 
+        # Per-minute drone gate: sustained-RED confirmation
+        _check_drone_dispatch(junction_id, arm_id, warrant_output.alert_level, alert)
+
         # Check for EARLY_RED
         if alert is None or alert.level != "RED":
             alert_manager.process_extreme_risk(
@@ -604,15 +629,17 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
         except Exception as e:
             logger.error("Failed to save minute metrics: %s", e)
 
-        # Update shared state and broadcast
-        _state.update_latest_metrics(junction_id, arm_id, features)
-        _broadcast_from_thread(ws_manager.send_metrics(junction_id, arm_id, {
+        # Update shared state and broadcast — include ML scores so the REST
+        # fallback (/junction/{id}/status) returns the same data as the WS push.
+        full_metrics = {
             **features,
             "lstm_score": ml_result["lstm_score"],
             "anomaly_score": ml_result["anomaly_score"],
             "extreme_congestion_risk": ml_result["extreme_congestion_risk"],
             "alert_level": warrant_output.alert_level,
-        }))
+        }
+        _state.update_latest_metrics(junction_id, arm_id, full_metrics)
+        _broadcast_from_thread(ws_manager.send_metrics(junction_id, arm_id, full_metrics))
 
         logger.debug(
             "%s: VPM=%d queue=%d lstm=%.3f anomaly=%.4f extreme=%.3f alert=%s",
@@ -620,6 +647,116 @@ def _run_camera_pipeline(junction_id: str, arm_id: str, ingestion,
             ml_result["lstm_score"], ml_result["anomaly_score"],
             ml_result["extreme_congestion_risk"], warrant_output.alert_level,
         )
+
+
+def _prompt_roi_setup() -> None:
+    """
+    At startup (non-demo mode), show the ROI status for every camera that has
+    a video source and offer to draw/redraw polygons before the server starts.
+
+    Always shown — video sources can be configured from the frontend between
+    boots, so a camera that was unconfigured last time may now have a source,
+    and a previously-drawn ROI may need to be updated.
+    """
+    import json
+    import sys
+    from pathlib import Path
+
+    # Collect every camera that has a usable video source
+    cameras_with_source: list[tuple[str, str]] = []
+    for jid, jdata in config.JUNCTIONS.items():
+        for aid, arm_cfg in jdata["arms"].items():
+            source = arm_cfg.get("rtsp_url", "") or config.DEMO_VIDEO_PATH
+            if source:
+                cameras_with_source.append((f"{jid}_{aid}", source))
+
+    if not cameras_with_source:
+        print(
+            "\n[ROI SETUP] No video sources found in config or DEMO_VIDEO_PATH.\n"
+            "            Configure sources from the frontend, then restart.\n"
+        )
+        return
+
+    # Load any ROI masks already saved
+    existing_roi: dict = {}
+    if config.ROI_MASKS_PATH.exists():
+        try:
+            with open(config.ROI_MASKS_PATH) as f:
+                existing_roi = json.load(f)
+        except (json.JSONDecodeError, OSError):
+            pass
+
+    print("\n" + "=" * 60)
+    print(" ROI SETUP — Region of Interest calibration")
+    print("=" * 60)
+    print(f" {'Camera':<30} {'ROI status'}")
+    print(" " + "-" * 50)
+    for cid, _ in cameras_with_source:
+        configured = cid in existing_roi and len(existing_roi.get(cid, [])) >= 3
+        verts = f"{len(existing_roi[cid])} vertices" if configured else ""
+        status = f"CONFIGURED  {verts}" if configured else "NOT SET — full frame"
+        print(f"   {cid:<28} {status}")
+    print(
+        "\n Drawing an ROI restricts detection to your target lane,\n"
+        " improving accuracy and reducing false positives.\n"
+        " Video sources may have been updated from the frontend.\n"
+    )
+
+    ans = input(" Draw / redraw ROI for cameras? [Y/n]: ").strip().lower()
+    if ans == "n":
+        print(" Skipped.\n")
+        return
+
+    # Load interactive helpers from scripts/setup_roi.py
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "scripts"))
+    try:
+        from setup_roi import grab_first_frame, select_roi_interactive
+    except ImportError as exc:
+        logger.error("Could not import setup_roi helpers: %s", exc)
+        return
+
+    from backend.pipeline.roi import save_roi
+
+    # Let the user pick which cameras to (re)draw; default = all with sources
+    print("\n Which cameras do you want to configure?")
+    print("  [a] All cameras listed above")
+    for i, (cid, _) in enumerate(cameras_with_source, 1):
+        configured = cid in existing_roi and len(existing_roi.get(cid, [])) >= 3
+        tag = " (already set)" if configured else ""
+        print(f"  [{i}] {cid}{tag}")
+    sel = input("\n Enter choice (a / comma-separated numbers, e.g. 1,3): ").strip().lower()
+
+    if sel == "a" or sel == "":
+        targets = cameras_with_source
+    else:
+        indices = []
+        for part in sel.split(","):
+            part = part.strip()
+            if part.isdigit():
+                idx = int(part) - 1
+                if 0 <= idx < len(cameras_with_source):
+                    indices.append(idx)
+        targets = [cameras_with_source[i] for i in indices]
+
+    if not targets:
+        print(" No valid selection — skipping.\n")
+        return
+
+    print()
+    for camera_id, source in targets:
+        print(f"[ROI] {camera_id} — grabbing frame from: {source}")
+        frame = grab_first_frame(source)
+        if frame is None:
+            print(f"[ROI] Could not read a frame from {source} — skipping {camera_id}.")
+            continue
+        points = select_roi_interactive(frame, camera_id)
+        if points:
+            save_roi(camera_id, points)
+            print(f"[ROI] Saved {len(points)}-vertex polygon for {camera_id}.")
+        else:
+            print(f"[ROI] Skipped {camera_id} — previous ROI (if any) kept.")
+
+    print()
 
 
 @asynccontextmanager
@@ -647,6 +784,17 @@ async def lifespan(app: FastAPI):
     else:
         # Start real video pipeline
         from backend.pipeline.ingestion import IngestionManager
+
+        # Reload ROI filters now — may have been drawn interactively just before startup
+        roi_filters.update(load_roi_filters())
+        logger.info(
+            "Pipeline: vehicle detection (cars/motorcycles/buses/trucks) | "
+            "VPM counting | congestion score (LSTM) | extreme risk | "
+            "ROI filters: %d/%d cameras configured",
+            len(roi_filters),
+            sum(1 for jd in config.JUNCTIONS.values() for _ in jd["arms"]),
+        )
+
         ingestion = IngestionManager()
         ingestion.start_all()
         logger.info("Video ingestion started")
@@ -707,8 +855,19 @@ async def websocket_endpoint(ws: WebSocket):
 
 if __name__ == "__main__":
     import uvicorn
-    ans = input("Do you want to show the live video preview window for verification? [y/N]: ").strip().lower()
+
+    # Apply frontend-saved overrides (junction_overrides.json) into config.JUNCTIONS
+    # before the ROI prompt so that stream URLs set from the frontend are visible.
+    load_admin_overrides()
+
+    # In non-demo mode, offer to draw ROI polygons for any unconfigured cameras
+    # before the server starts so that detection is lane-restricted from frame 1.
+    if not config.DEMO_MODE:
+        _prompt_roi_setup()
+
+    ans = input("Show live video preview window? [y/N]: ").strip().lower()
     if ans == "y":
         _show_preview = True
         print("[PREVIEW] Live OpenCV preview enabled — a window will open per camera.")
+
     uvicorn.run(app, host=config.API_HOST, port=config.API_PORT)

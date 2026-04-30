@@ -42,10 +42,10 @@
         ],
         "gps_lat": 11.360588678412634,
         "gps_lon": 75.91051202211374,
-        "rtsp_url": "C:\\Users\\PC\\Desktop\\koduvally data\\site1\\00005.mp4",
+        "rtsp_url": "C:\\Users\\PC\\Downloads\\00007.mp4",
         "counting_line_orientation": "horizontal",
         "counting_line_x_fraction": 0.5,
-        "counting_line_y_fraction": 0.55
+        "counting_line_y_fraction": 0.63
       },
       "ARM_SOUTH": {
         "road_path": [
@@ -84,7 +84,7 @@
         ],
         "gps_lat": 11.35797899560295,
         "gps_lon": 75.90912332948614,
-        "rtsp_url": "C:\\Users\\PC\\Desktop\\koduvally data\\site2\\00002.mp4"
+        "rtsp_url": ""
       },
       "ARM_EAST": {
         "road_path": [
@@ -115,7 +115,7 @@
         ],
         "gps_lat": 11.358767898600489,
         "gps_lon": 75.91395195412741,
-        "rtsp_url": "rtsp://localhost:8554/cam1"
+        "rtsp_url": ""
       },
       "ARM_WEST": {
         "road_path": [

@@ -40,7 +40,7 @@ ROI_MASKS_PATH = DATA_DIR / "roi_masks.json"
 # ─────────────────────────────────────────────
 # YOLO DETECTION
 # ─────────────────────────────────────────────
-YOLO_MODEL_NAME = "yolov8n.pt"
+YOLO_MODEL_NAME = "yolov8s.pt"
 YOLO_CONFIDENCE_THRESHOLD = float(os.getenv("YOLO_CONF", "0.25"))
 # COCO class IDs to keep: bicycle=1, car=2, motorcycle=3, bus=5, truck=7
 YOLO_TARGET_CLASSES = [1, 2, 3, 5, 7]
@@ -58,6 +58,19 @@ TRACK_FRAME_RATE = FRAME_RATE
 # Counting deduplication
 MIN_TRACK_AGE_FRAMES = 1       # track must exist this many frames before it can be counted
 CROSSING_DEDUP_PIXELS = 25.0   # suppress crossing if another track crossed within this distance recently
+
+# Detection-based counter (DetectionCrossCounter) tuning.
+# max_match_pixels: L1 centroid displacement budget (|Δy| + |Δx|) to link a
+#   detection in frame N to the closest detection in frame N-1.  Increase if
+#   vehicles are fast or the camera is high/zoomed-out (UAV footage).
+#   At 5 FPS a vehicle doing 30 km/h at typical UAV height ≈ 80–180 px/frame;
+#   250 gives comfortable headroom without matching across lanes.
+# dedup_pixels / dedup_frames: suppress a crossing if another was registered
+#   within this many pixels on the parallel axis within this many frames.
+#   Tighten to avoid double-counts; loosen to count close-following vehicles.
+DET_CROSS_MAX_MATCH_PIXELS = float(os.getenv("DET_CROSS_MAX_MATCH_PIXELS", "250"))
+DET_CROSS_DEDUP_PIXELS     = float(os.getenv("DET_CROSS_DEDUP_PIXELS",     "25"))
+DET_CROSS_DEDUP_FRAMES     = int(os.getenv("DET_CROSS_DEDUP_FRAMES",       "3"))
 
 # ─────────────────────────────────────────────
 # MOTION & QUEUE ANALYSIS
@@ -141,6 +154,13 @@ ALERT_DEESCALATE_MINUTES = 2      # consecutive clean minutes before de-escalati
 # ─────────────────────────────────────────────
 DRONE_WEBHOOK_URL = os.getenv("DRONE_WEBHOOK_URL", "")  # empty = mock/log-only
 EVIDENCE_CLIP_SECONDS = 30       # seconds of video to save before RED alert
+
+# Sustained-RED confirmation before drone dispatch.
+# A single 1-minute RED can come from detector noise, a brief platoon, or a
+# signal-cycle spike. Require REQUIRED_RED red minutes within the last
+# WINDOW_MINUTES before launching the drone. One flicker is tolerated.
+DRONE_TRIGGER_REQUIRED_RED = int(os.getenv("DRONE_TRIGGER_REQUIRED_RED", "2"))
+DRONE_TRIGGER_WINDOW_MINUTES = int(os.getenv("DRONE_TRIGGER_WINDOW_MINUTES", "3"))
 
 # ─────────────────────────────────────────────
 # PEAK HOURS (used for Case A vs Case B classification)

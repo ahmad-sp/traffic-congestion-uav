@@ -277,7 +277,12 @@ class DetectionCrossCounter:
                     self._recent_crossings.append((curr_par, self._frame_num))
                     new_crossings += 1
 
-        self._prev_centroids = current
+        # Only update prev when we actually have detections.  If YOLO misses
+        # all vehicles for one frame (occlusion, blur, lighting) and we reset
+        # to [], the following frame can't match anything and a crossing near
+        # that frame boundary is silently dropped.
+        if current:
+            self._prev_centroids = current
         return new_crossings
 
     def get_count(self) -> int:

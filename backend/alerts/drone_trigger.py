@@ -9,6 +9,7 @@ import json
 import logging
 import sys
 import uuid
+from collections import deque
 from dataclasses import dataclass, asdict
 from datetime import datetime, timezone
 from pathlib import Path
@@ -54,6 +55,71 @@ class DroneTriggerManager:
     def __init__(self):
         self._triggers: list[DroneTriggerPacket] = []
         self.on_trigger: callable | None = None  # WebSocket callback
+
+        # Per-arm sustained-RED tracking. Each arm keeps a deque of the last
+        # DRONE_TRIGGER_WINDOW_MINUTES booleans (True = that minute was RED).
+        # _dispatched marks whether the drone has already been launched for
+        # the current red episode — reset once the window goes fully non-red.
+        self._recent_red: dict[str, deque] = {}
+        self._dispatched: dict[str, bool] = {}
+        self._pending_alert: dict[str, Alert] = {}
+
+    def observe_minute(
+        self,
+        junction_id: str,
+        arm_id: str,
+        is_red: bool,
+        alert: Alert | None = None,
+    ) -> Alert | None:
+        """
+        Feed a per-minute observation of the arm's RED state.
+
+        Returns the Alert that should be dispatched now (caller runs
+        compile_trigger + persistence + WS broadcast), or None if the
+        sustained-RED threshold has not yet been met.
+
+        Gates on DRONE_TRIGGER_REQUIRED_RED red minutes within the last
+        DRONE_TRIGGER_WINDOW_MINUTES observations — filters single-minute
+        flickers from detector noise or brief platoons.
+        """
+        key = f"{junction_id}_{arm_id}"
+        window = self._recent_red.setdefault(
+            key, deque(maxlen=config.DRONE_TRIGGER_WINDOW_MINUTES)
+        )
+        window.append(bool(is_red))
+
+        if alert is not None and alert.level == "RED":
+            self._pending_alert[key] = alert
+
+        red_count = sum(1 for x in window if x)
+
+        if red_count == 0:
+            # Red episode is over — allow the next one to fire again.
+            self._dispatched[key] = False
+            self._pending_alert.pop(key, None)
+            return None
+
+        if self._dispatched.get(key):
+            return None
+
+        if red_count >= config.DRONE_TRIGGER_REQUIRED_RED:
+            confirmed = self._pending_alert.get(key)
+            if confirmed is None:
+                # No alert object captured for this episode (e.g. AlertManager
+                # debounced every emission). Can't build a packet — skip.
+                return None
+            self._dispatched[key] = True
+            logger.info(
+                "Drone trigger confirmed for %s: %d/%d RED in last %d min",
+                key, red_count, config.DRONE_TRIGGER_REQUIRED_RED, len(window),
+            )
+            return confirmed
+
+        logger.debug(
+            "Drone trigger pending for %s: %d/%d RED in last %d min",
+            key, red_count, config.DRONE_TRIGGER_REQUIRED_RED, len(window),
+        )
+        return None
 
     def compile_trigger(self, alert: Alert, evidence_clip: str = "",
                         evidence_snapshot: str = "") -> DroneTriggerPacket:
